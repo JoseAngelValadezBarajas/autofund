@@ -1,0 +1,11 @@
+{
+  "description": "Synthetic Stage-shaped deterministic fixtures. No account data or credentials.",
+  "books": [{"book":"btc_mxn","minimum_amount":"0.0000006","maximum_amount":"600","minimum_price":"100","maximum_price":"40000000","minimum_value":"1","maximum_value":"200000000","tick_size":"10"}],
+  "balances": {"balances":[{"currency":"mxn","total":"100000","locked":"0","available":"100000"},{"currency":"btc","total":"100","locked":"0","available":"100"}]},
+  "fees": {"fees":[{"book":"btc_mxn","maker_fee_decimal":"0.01","taker_fee_decimal":"0.02","current_volume":"0"}]},
+  "fills": [
+    {"tid":"trade-A","oid":"remote-1","origin_id":"af-stage-golden","book":"btc_mxn","side":"buy","major":"0.003","minor":"-3","price":"1000","fees_amount":"-0.03","fees_currency":"mxn","major_currency":"btc","minor_currency":"mxn","maker_side":"buy","created_at":"2026-09-18T00:00:01Z"},
+    {"tid":"trade-B","oid":"remote-1","origin_id":"af-stage-golden","book":"btc_mxn","side":"buy","major":"0.007","minor":"-7","price":"1000","fees_amount":"-0.07","fees_currency":"mxn","major_currency":"btc","minor_currency":"mxn","maker_side":"buy","created_at":"2026-09-18T00:00:02Z"}
+  ],
+  "expected": {"initial_equity":"50","max_deployment":"25","after_A_cash":"46.97","final_cash":"39.90","final_quantity":"0.010","final_cost_basis":"10.10","ledger_entries":3,"unique_fills":2,"post_attempts":1}
+}

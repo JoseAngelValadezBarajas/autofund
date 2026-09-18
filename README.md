@@ -1,4 +1,4 @@
-# AutoFund 0.3 ? Financial Core + Deterministic Replay
+# AutoFund 0.4 - Financial Core, Replay and Stage Execution
 
 **F0 IS NOT A PROFITABLE TRADING SYSTEM.**
 **F1 IS NOT A PROFITABLE TRADING SYSTEM.**
@@ -12,6 +12,38 @@ F0 est? congelado en `066a54c`: su c?digo, pruebas, especificaci?n y demo no se
 modifican para F1. El nuevo paquete `autofund.replay` utiliza Wallet,
 CapitalManager, RiskEngine y PaperExecutionEngine mediante sus contratos.
 
+
+## F3 - Bitso Stage execution
+
+F3 adds manual Bitso **Stage-only** execution and reconciliation on baseline
+`3facf25`. F0/F1/F2 remain frozen. Production, withdrawals and autonomous strategy
+execution are unavailable. HTTPX is reused; no dependency was added.
+
+Credentials are read only from `AUTOFUND_BITSO_STAGE_API_KEY` and
+`AUTOFUND_BITSO_STAGE_API_SECRET`. Never commit credentials or pass them in CLI
+arguments. `.env`, `*.secret` and `keys.json` are ignored; no file credential
+loader is provided.
+
+```powershell
+.venv\Scripts\python -m pip install -e . --no-deps
+.venv\Scripts\autofund bitso-stage market-info btc_mxn
+.venv\Scripts\autofund bitso-stage status
+.venv\Scripts\autofund bitso-stage order-test --single-order-cap 11
+# Only with authorized Stage credentials; explicit order placement:
+.venv\Scripts\autofund bitso-stage order-test --single-order-cap 11 --confirm-stage
+.venv\Scripts\python -m pytest -q
+.venv\Scripts\python -m pytest -m stage -q
+```
+
+Without `--confirm-stage`, order-test is a dry run. The local allocation is
+50 MXN with at most 25 MXN deployment, independent of exchange account wealth.
+The single-order cap is explicit. An ambiguous POST is never blindly repeated;
+confirmed fills update F0 once and a durable journal supports restart recovery.
+
+[F3_SPEC](docs/F3_SPEC.md) documents API sources, safety, fees, accounting and
+recovery. Offline certification passes; authenticated Stage certification is
+**pending authorized Stage credentials**. The local certification artifact
+reports SKIPPED; no order was submitted during this implementation run.
 
 ## F2 - public market capture
 
