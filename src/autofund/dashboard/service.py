@@ -77,7 +77,7 @@ class DashboardDataProvider:
         result = self.result
         last = self._frames[-1].observed_at.isoformat() if self._frames else self._header.get("start")
         return models.Health(
-            market_data_status=result["quality"], accounting="PASS", last_market_event_at=_utc(last), current_session_id=self.session_id()
+            demo_mode=self.demo, market_data_status=result["quality"], accounting="PASS", last_market_event_at=_utc(last), current_session_id=self.session_id()
         )
 
     def overview(self) -> models.Overview:
@@ -86,7 +86,7 @@ class DashboardDataProvider:
         deployed = _string(metrics["max_deployed_mxn"] if not self.demo else self.result.get("currently_deployed", "0"))
         max_deploy = _string(float(config["initial_equity"]) * float(config["max_deployment"]))
         return models.Overview(
-            market=result["book"], strategy_id=result["strategy_fingerprint"], initial_shadow_equity_mxn=_string(metrics["initial_equity"]), current_shadow_equity_mxn=equity,
+            demo_mode=self.demo, market=result["book"], strategy_id=result["strategy_fingerprint"], initial_shadow_equity_mxn=_string(metrics["initial_equity"]), current_shadow_equity_mxn=equity,
             realized_pnl_mxn=_string(result.get("realized_pnl", metrics["net_pnl"])), unrealized_pnl_mxn=_string(result.get("unrealized_pnl", "0")), net_pnl_mxn=_string(metrics["net_pnl"]), return_pct=_string(metrics["return"]),
             max_deployment_mxn=max_deploy, currently_deployed_mxn=deployed, available_deployment_mxn=_string(max(0, float(max_deploy) - float(deployed))), closed_trade_count=int(metrics["closed_trades"]), winning_trades=int(metrics["wins"]), losing_trades=int(metrics["losses"]), total_fees_mxn=_string(metrics["fees"]), spread_cost_mxn=_string(metrics["spread_cost"]), slippage_cost_mxn=_string(metrics["depth_slippage"]), max_drawdown_pct=_string(metrics["max_drawdown"]), market_quality=result["quality"], risk_status="HALTED" if result.get("halt_reason") else "NORMAL", last_update=self.health().last_market_event_at,
         )
@@ -102,6 +102,10 @@ class DashboardDataProvider:
 
     def candles(self) -> list[models.Candle]:
         return [models.Candle(timestamp=_utc(c["timestamp"]) or datetime.now(UTC), open=_string(c["open"]), high=_string(c["high"]), low=_string(c["low"]), close=_string(c["close"]), volume=_string(c["volume"])) for c in self._candles()]
+
+    def equity(self) -> list[models.EquityPoint]:
+        points = self.result.get("equity_curve", [])
+        return [models.EquityPoint(timestamp=_utc(x["timestamp"]) or datetime.now(UTC), equity_mxn=_string(x["equity"])) for x in points]
 
     def market(self) -> models.Market:
         depth, candles = self._latest_depth(), self.candles()

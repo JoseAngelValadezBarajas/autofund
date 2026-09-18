@@ -11,6 +11,7 @@ class DashboardModel(BaseModel):
 
 
 class Health(DashboardModel):
+    demo_mode: bool = False
     application_status: Literal["RUNNING"] = "RUNNING"
     environment: Literal["BITSO PRODUCTION"] = "BITSO PRODUCTION"
     execution_mode: Literal["SHADOW"] = "SHADOW"
@@ -23,6 +24,7 @@ class Health(DashboardModel):
 
 
 class Overview(DashboardModel):
+    demo_mode: bool = False
     mode: Literal["SHADOW"] = "SHADOW"
     market: str
     strategy_id: str
@@ -207,3 +209,8 @@ class Page(DashboardModel):
 class ApiError(DashboardModel):
     code: str
     message: str
+
+
+class EquityPoint(DashboardModel):
+    timestamp: datetime
+    equity_mxn: str

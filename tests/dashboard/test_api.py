@@ -25,3 +25,11 @@ def test_mutations_and_invalid_pagination_rejected() -> None:
     for method in ("post", "put", "patch", "delete"):
         assert getattr(app, method)("/api/v1/overview").status_code == 405
     assert app.get("/api/v1/ledger?limit=201").status_code == 422
+
+
+def test_equity_is_utc_strings_and_demo_contract() -> None:
+    demo = TestClient(create_app(DashboardDataProvider(Path("unused"), demo=True)))
+    assert demo.get("/api/v1/health").json()["demo_mode"] is True
+    points = demo.get("/api/v1/equity").json()
+    assert points and isinstance(points[0]["equity_mxn"], str)
+    assert points[0]["timestamp"].endswith("Z")

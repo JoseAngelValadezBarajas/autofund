@@ -49,6 +49,8 @@ def create_app(provider: DashboardDataProvider, dist: Path | None = None) -> Fas
     def market(data: Provider) -> models.Market: return data.market()
     @app.get("/api/v1/candles", response_model=list[models.Candle])
     def candles(data: Provider, limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 50) -> list[models.Candle]: return data.candles()[-limit:]
+    @app.get("/api/v1/equity", response_model=list[models.EquityPoint])
+    def equity(data: Provider, limit: Annotated[int, Query(ge=1, le=MAX_PAGE)] = 200) -> list[models.EquityPoint]: return data.equity()[-limit:]
     @app.get("/api/v1/order-book", response_model=models.OrderBook)
     def order_book(data: Provider) -> models.OrderBook: return data.order_book()
     @app.get("/api/v1/risk", response_model=models.Risk)
