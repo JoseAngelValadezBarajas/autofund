@@ -1,0 +1,12 @@
+{
+  "closed_trade_count": 1,
+  "config_fingerprint": "ae8e28516637b8774d2114079aac858ed5518efe6e98c1c8786d6c3130002a38",
+  "dataset_fingerprint": "823c5050efa216965c4c4607d79b429978fa3b2126dc600be444bcc32e3b0f92",
+  "fill_count": 2,
+  "final_equity_mxn": "49.6",
+  "fixture": "mean_reversion_market.csv",
+  "ledger_entry_count": 3,
+  "result_fingerprint": "eeb552bfabfb588d82df30d5191d02d1bbb60d6dddff0aa8e5498da216755bd5",
+  "strategy_fingerprint": "03c326e21c9f239b7e7a2c4ef476fad57a321bc859e45b5d9fdfd6554fa476b9",
+  "total_fees_mxn": "0.2"
+}
