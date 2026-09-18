@@ -1,16 +1,47 @@
-# AutoFund 0.2 ? Financial Core + Deterministic Replay
+# AutoFund 0.3 ? Financial Core + Deterministic Replay
 
 **F0 IS NOT A PROFITABLE TRADING SYSTEM.**
 **F1 IS NOT A PROFITABLE TRADING SYSTEM.**
 
 AutoFund contiene un n?cleo financiero paper en MXN y un replay hist?rico local,
-determinista y auditable. Python 3.12+, sin dependencias de runtime.
-No conecta exchanges ni usa dinero real; tampoco descarga datos. La ?nica estrategia
+determinista y auditable. Python 3.12+. F0/F1 no importan librerias externas; F2 usa HTTPX y websockets.
+F2 observa datos publicos de Binance Spot, sin cuentas ni ordenes. No usa dinero real. La ?nica estrategia
 es un dummy deliberadamente sencillo; no hay b?squeda de rentabilidad.
 
 F0 est? congelado en `066a54c`: su c?digo, pruebas, especificaci?n y demo no se
 modifican para F1. El nuevo paquete `autofund.replay` utiliza Wallet,
 CapitalManager, RiskEngine y PaperExecutionEngine mediante sus contratos.
+
+
+## F2 - public market capture
+
+**F2 HAS NO ORDER CAPABILITY.** Baseline F0/F1: `2781c71`, unchanged.
+Only public metadata and UTC kline streams; no API keys, secrets or .env.
+
+```powershell
+.venv\Scripts\python -m pip install -e ".[dev]"
+.venv\Scripts\autofund market info --symbol BTCMXN
+.venv\Scripts\autofund market capture --symbol BTCMXN --interval 1s --closed-candles 5 --max-seconds 45 --output artifacts/my_session.jsonl
+.venv\Scripts\autofund market replay artifacts/my_session.jsonl
+.venv\Scripts\python -m pytest -q
+.venv\Scripts\python -m pytest -m live -q
+```
+
+Normal tests are offline; `-m live` opts into real public connectivity.
+Capture writes normalized JSONL, raw JSONL and a manifest next to the requested
+path. Existing bundles are not overwritten. Copy all three files for replay.
+A capture ends at N unique closed candles, a time limit or Ctrl+C; partial sessions
+are finalized. For longer observations use `--interval 1m --closed-candles 10`.
+
+The unchanged F1 strategy receives only accepted closed candles with a fixed
+neutral snapshot. Outputs are directional WOULD_BUY/NO_ACTION observations, with
+no sizing, positions or execution. F2 market-data replay proves event/signal parity;
+it is distinct from F1 trading replay. Quality is VALID, DEGRADED or INVALID.
+Only valid MXN sessions export to F1 by default; no FX conversion is invented.
+
+[docs/F2_SPEC.md](docs/F2_SPEC.md) freezes official sources, metadata, lifecycle,
+quality policies, capture schema, golden parity, dependency audit and live evidence.
+The live BTC/MXN sample achieved five closed candles and exact offline parity.
 
 ## Instalaci?n y pruebas
 
@@ -99,5 +130,5 @@ Herramientas opcionales de revisi?n (no runtime):
 .venv\Scripts\python -m pip install ruff mypy
 .venv\Scripts\python -m ruff check src tests examples
 .venv\Scripts\python -m ruff format --check src tests examples
-.venv\Scripts\python -m mypy --strict --follow-imports=silent src/autofund/replay
+.venv\Scripts\python -m mypy --strict --follow-imports=silent src/autofund/replay src/autofund/market
 ```

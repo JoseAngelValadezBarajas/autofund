@@ -1,0 +1,42 @@
+{
+  "timezone": "UTC",
+  "serverTime": 1767225600000,
+  "rateLimits": [
+    {
+      "rateLimitType": "REQUEST_WEIGHT",
+      "interval": "MINUTE",
+      "intervalNum": 1,
+      "limit": 6000
+    }
+  ],
+  "symbols": [
+    {
+      "symbol": "BTCMXN",
+      "status": "TRADING",
+      "baseAsset": "BTC",
+      "quoteAsset": "MXN",
+      "isSpotTradingAllowed": true,
+      "filters": [
+        {
+          "filterType": "PRICE_FILTER",
+          "minPrice": "1.00000000",
+          "maxPrice": "99928191.00000000",
+          "tickSize": "1.00000000"
+        },
+        {
+          "filterType": "LOT_SIZE",
+          "minQty": "0.00000100",
+          "maxQty": "922.00000000",
+          "stepSize": "0.00000100"
+        },
+        {
+          "filterType": "NOTIONAL",
+          "minNotional": "150.00000000",
+          "maxNotional": "9000000.00000000",
+          "applyMinToMarket": true,
+          "applyMaxToMarket": false
+        }
+      ]
+    }
+  ]
+}

@@ -4,10 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autofund"
-version = "0.2.0"
+version = "0.3.0"
 description = "Deterministic paper financial and risk core"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["httpx>=0.28,<0.29", "websockets>=16,<18"]
+
+[project.scripts]
+autofund = "autofund.market.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
@@ -18,6 +21,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-m 'not live'"
+markers = ["live: opt-in public network certification", "integration: integration across real external interfaces"]
 
 [tool.ruff]
 target-version = "py312"
