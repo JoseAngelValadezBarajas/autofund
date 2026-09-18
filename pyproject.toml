@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autofund"
-version = "0.4.0"
+version = "0.5.0"
 description = "Deterministic paper financial and risk core"
 requires-python = ">=3.12"
 dependencies = ["httpx>=0.28,<0.29", "websockets>=16,<18"]
 
 [project.scripts]
-autofund = "autofund.cli:main"
+autofund = "autofund.f4_cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]

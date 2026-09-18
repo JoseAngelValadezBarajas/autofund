@@ -1,4 +1,4 @@
-# AutoFund 0.4 - Financial Core, Replay and Stage Execution
+# AutoFund 0.5 - Production Read-only and Shadow Trading
 
 **F0 IS NOT A PROFITABLE TRADING SYSTEM.**
 **F1 IS NOT A PROFITABLE TRADING SYSTEM.**
@@ -12,6 +12,23 @@ F0 est? congelado en `066a54c`: su c?digo, pruebas, especificaci?n y demo no se
 modifican para F1. El nuevo paquete `autofund.replay` utiliza Wallet,
 CapitalManager, RiskEngine y PaperExecutionEngine mediante sus contratos.
 
+
+## F4 - Bitso Production read-only and shadow trading
+
+F4 adds a dedicated GET-only Production observer and deterministic virtual
+execution on real public trades/order-book snapshots. Real account balances are
+private by default and never fund the shadow wallet. Defaults are 50 MXN virtual
+capital, 25 MXN maximum deployment and a 10 MXN single-order cap.
+
+`autofund bitso-prod status` requires dedicated read-only Production credentials
+and operator confirmation in environment variables. `autofund shadow run`
+requires no credentials by default. Capture, replay and daily/weekly reports are
+available; real Production execution is not implemented.
+
+[F4_SPEC](docs/F4_SPEC.md) contains commands, API sources, security boundaries,
+recovery policy and certification results. Authentication passed. The real
+10-candle capture has exact replay parity and **DEGRADED** data quality due to
+stale snapshots and out-of-order trades; it is not a benchmark candidate.
 
 ## F3 - Bitso Stage execution
 

@@ -1,0 +1,14 @@
+{
+  "result_fingerprint": "215074a34cd616fc45182d1c7d7bebe29395c41004cd1bb49bc2d86086b2c950",
+  "strategy_fingerprint": "994a7f2199487fedc7433970656d4825c2d1be05beae0e544a0dbb9361a91ed5",
+  "data_fingerprint": "816c8cceb533dfca754c39f729ff232525727747c90bc454692cfbbd275ab6d6",
+  "config_fingerprint": "dc0898cee4ce3c76e96f2b75c2798ebc460c9bcbfc5ed9aed2a985448c09eab0",
+  "net_pnl": "-0.21760398",
+  "final_equity": "49.78239602",
+  "fees": "0.1978218",
+  "quantity_bought": "0.00989109",
+  "candles": 6,
+  "signals": 2,
+  "fills": 2,
+  "ledger_entries": 3
+}
