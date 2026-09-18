@@ -39,6 +39,8 @@ def create_app(provider: DashboardDataProvider, dist: Path | None = None) -> Fas
 
     @app.get("/api/v1/health", response_model=models.Health)
     def health(data: Provider) -> models.Health: return data.health()
+    @app.get("/api/v1/runtime", response_model=models.RuntimeView)
+    def runtime(data: Provider) -> models.RuntimeView: return data.runtime()
     @app.get("/api/v1/overview", response_model=models.Overview)
     def overview(data: Provider) -> models.Overview: return data.overview()
     @app.get("/api/v1/portfolio", response_model=models.Portfolio)
@@ -83,7 +85,11 @@ def create_app(provider: DashboardDataProvider, dist: Path | None = None) -> Fas
     async def stream(request: Request, data: Provider) -> StreamingResponse:
         async def events() -> AsyncIterator[str]:
             while not await request.is_disconnected():
-                payload = {"overview": data.overview().model_dump(mode="json"), "quality": data.quality().model_dump(mode="json")}
+                payload = {"runtime": data.runtime().model_dump(mode="json")}
+                try:
+                    payload.update(overview=data.overview().model_dump(mode="json"), quality=data.quality().model_dump(mode="json"))
+                except FileNotFoundError:
+                    pass
                 yield f"event: snapshot\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
                 await asyncio.sleep(3)
         return StreamingResponse(events(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})

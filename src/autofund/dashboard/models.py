@@ -11,6 +11,8 @@ class DashboardModel(BaseModel):
 
 
 class Health(DashboardModel):
+    application: Literal["AutoFund"] = "AutoFund"
+    ready: Literal[True] = True
     demo_mode: bool = False
     application_status: Literal["RUNNING"] = "RUNNING"
     environment: Literal["BITSO PRODUCTION"] = "BITSO PRODUCTION"
@@ -18,7 +20,7 @@ class Health(DashboardModel):
     production_trading: Literal["DISABLED"] = "DISABLED"
     production_write_capability: Literal["BLOCKED"] = "BLOCKED"
     market_data_status: Literal["VALID", "DEGRADED", "INVALID"]
-    accounting: Literal["PASS", "FAIL"]
+    accounting: Literal["PASS", "FAIL", "UNKNOWN"]
     last_market_event_at: datetime | None = None
     current_session_id: str | None = None
 
@@ -214,3 +216,66 @@ class ApiError(DashboardModel):
 class EquityPoint(DashboardModel):
     timestamp: datetime
     equity_mxn: str
+
+
+class OpenCandle(DashboardModel):
+    status: Literal["OPEN"] = "OPEN"
+    interval_start: datetime
+    interval_end: datetime
+    open: str
+    high: str
+    low: str
+    last: str
+    volume: str
+    trade_count: int = Field(ge=1)
+
+
+class RuntimeMarket(DashboardModel):
+    last_price_mxn: str | None
+    best_bid_mxn: str
+    best_ask_mxn: str
+    spread_mxn: str
+    spread_bps: str
+    orderbook_at: datetime
+
+
+class RuntimeEvent(DashboardModel):
+    event_id: int
+    timestamp: datetime
+    event_type: str
+    session_id: str
+    market: str
+    summary: str
+    strategy_id: str | None = None
+    side: str | None = None
+    amount_mxn: str | None = None
+    price: str | None = None
+    outcome: str | None = None
+    quality: str | None = None
+    source_candle_timestamp: datetime | None = None
+    ledger_entry_id: int | None = None
+
+
+class RuntimeView(DashboardModel):
+    schema_version: Literal["autofund.runtime.v1"] = "autofund.runtime.v1"
+    demo_mode: bool = False
+    snapshot_ready: bool = False
+    session_id: str | None = None
+    status: Literal["STARTING", "RUNNING", "STOPPING", "STOPPED", "DISCONNECTED", "HALTED"] = "STOPPED"
+    mode: Literal["SHADOW"] = "SHADOW"
+    started_at: datetime | None = None
+    elapsed_seconds: int = 0
+    last_event_at: datetime | None = None
+    last_market_event_at: datetime | None = None
+    last_closed_candle_at: datetime | None = None
+    last_state_update_at: datetime | None = None
+    market: str = "btc_mxn"
+    interval: Literal["1m"] = "1m"
+    strategy_id: str | None = None
+    current_candle: OpenCandle | None = None
+    market_snapshot: RuntimeMarket | None = None
+    risk_status: Literal["NORMAL", "HALTED", "UNKNOWN"] = "UNKNOWN"
+    accounting_status: Literal["PASS", "FAIL", "UNKNOWN"] = "UNKNOWN"
+    quality: Literal["VALID", "DEGRADED", "INVALID"] = "VALID"
+    heartbeat: Literal["LIVE", "STALE", "DISCONNECTED"] = "DISCONNECTED"
+    events: list[RuntimeEvent] = Field(default_factory=list, max_length=500)

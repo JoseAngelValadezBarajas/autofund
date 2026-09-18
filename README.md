@@ -1,5 +1,22 @@
 # AutoFund 0.5 - Production Read-only and Shadow Trading
 
+## Live SHADOW monitoring (F4.6)
+
+Build the local SPA once (`cd frontend`, `npm ci`, `npm run build`).
+`autofund shadow run --output artifacts/f4/my_session --duration 240 --closed-candles 2`
+starts/reuses the localhost dashboard and opens the OS default browser once.
+Runtime status, heartbeat, accepted OPEN candle, closed candles and activity update
+while the session runs. `--no-open-dashboard` skips automatic server/browser startup.
+Browser failure never changes risk/accounting/execution behavior.
+
+To retain the dashboard after completion, run `autofund dashboard` separately;
+the runner reuses it and leaves it running with STOPPED. Default URL:
+http://127.0.0.1:8000. Built frontend assets load without external Internet.
+`autofund dashboard --demo-live` offers a credential-free simulated live display,
+clearly marked DEMO DATA. Dashboard monitoring remains GET/SSE only.
+See [F4.6 observability specification](docs/F4_6_LIVE_OBSERVABILITY_SPEC.md) for
+contracts, limits, test commands and certification evidence. No F5 is implemented.
+
 **F0 IS NOT A PROFITABLE TRADING SYSTEM.**
 **F1 IS NOT A PROFITABLE TRADING SYSTEM.**
 

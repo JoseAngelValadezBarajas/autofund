@@ -54,7 +54,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parser.parse_args(argv)
         if args.command == "run":
-            from autofund.dashboard.runtime import ensure_dashboard
+            from autofund.dashboard.runtime import (
+                close_owned_dashboard,
+                ensure_dashboard,
+            )
+            from autofund.observability import RuntimePublisher
 
             config = ShadowConfig(
                 initial_equity=args.initial_equity,
@@ -79,17 +83,18 @@ def main(argv: list[str] | None = None) -> int:
                     ).fee_schedule(args.book)
                 except StrictReadOnlyLimitation:
                     fee = None  # Public fee schedule, no permission escalation.
+            publisher = RuntimePublisher(market=args.book)
             if not args.no_open_dashboard:
                 print(f"Dashboard available at: {ensure_dashboard(args.output)}")
-            result = run_public(
-                output=args.output,
-                book=args.book,
-                config=config,
-                duration=args.duration,
-                closed_candles=args.closed_candles,
-                fee=fee,
-                resume=args.resume,
-            )
+            try:
+                result = run_public(
+                    output=args.output, book=args.book, config=config,
+                    duration=args.duration, closed_candles=args.closed_candles,
+                    fee=fee, resume=args.resume, observer=publisher,
+                )
+            finally:
+                publisher.close()
+                close_owned_dashboard()
             print(
                 canonical_json(
                     {

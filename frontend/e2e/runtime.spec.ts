@@ -1,0 +1,25 @@
+import {expect,test} from '@playwright/test';
+test('live demo exposes open candle, evaluation, activity and clean stop',async({page})=>{
+  test.setTimeout(65000);
+  const errors:string[]=[],writes:string[]=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
+  page.on('request',r=>{if(r.url().includes('/api/')&&r.method()!=='GET')writes.push(r.method())});
+  await page.goto('http://127.0.0.1:8001/');
+  await expect(page.getByText('DEMO DATA')).toBeVisible();
+  await page.getByRole('button',{name:'Market',exact:true}).click();
+  await expect(page.getByText('OPEN CANDLE',{exact:true})).toBeVisible({timeout:30000});
+  await expect(page.getByLabel('Session runtime')).toContainText('RUNNING');
+  await expect(page.getByLabel('Session runtime')).toContainText('demo-runtime');
+  await expect(page.getByLabel('Closed candlestick chart')).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  await expect(page.getByLabel('Open candle')).toHaveScreenshot('open-candle.png');
+  await page.evaluate(()=>scrollTo(0,0));
+  await page.screenshot({path:`test-results/runtime-${test.info().project.name}.png`,fullPage:true});
+  await page.getByRole('button',{name:'Activity',exact:true}).click();
+  await expect(page.getByRole('cell',{name:'STRATEGY_EVALUATED',exact:true})).toBeVisible({timeout:20000});
+  await expect(page.getByRole('cell',{name:'NO_SIGNAL',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Session runtime')).toContainText('STOPPED',{timeout:15000});
+  await expect(page.getByRole('cell',{name:'SESSION_STOPPED',exact:true})).toBeVisible();
+  expect(errors).toEqual([]);expect(writes).toEqual([]);
+});

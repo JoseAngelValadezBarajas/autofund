@@ -9,13 +9,15 @@ from pathlib import Path
 import httpx
 
 URL = "http://127.0.0.1:8000"
+_owned: subprocess.Popen[bytes] | None = None
 
 
 def ensure_dashboard(session: Path, *, open_browser: bool = True) -> str:
     """Reuse or start localhost dashboard; failures never block a shadow session."""
+    global _owned
     if not _ready():
         try:
-            subprocess.Popen(
+            _owned = subprocess.Popen(
                 [
                     sys.executable,
                     "-m",
@@ -23,6 +25,7 @@ def ensure_dashboard(session: Path, *, open_browser: bool = True) -> str:
                     "dashboard",
                     "--session",
                     str(session),
+                    "--live-runtime",
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -42,8 +45,22 @@ def ensure_dashboard(session: Path, *, open_browser: bool = True) -> str:
     return URL
 
 
+def close_owned_dashboard() -> None:
+    """Never terminate a server that this execution did not start."""
+    global _owned
+    process, _owned = _owned, None
+    if process and process.poll() is None:
+        try:
+            process.terminate()
+            process.wait(timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
 def _ready() -> bool:
     try:
-        return httpx.get(URL + "/api/v1/health", timeout=0.2).status_code == 200
-    except httpx.HTTPError:
+        response = httpx.get(URL + "/api/v1/health", timeout=0.2)
+        data = response.json()
+        return response.status_code == 200 and isinstance(data, dict) and data.get("application") == "AutoFund" and data.get("ready") is True and data.get("demo_mode") is False
+    except (httpx.HTTPError, ValueError):
         return False

@@ -1,0 +1,9 @@
+import React from 'react';
+import {cleanup,render,screen} from '@testing-library/react';
+import {afterEach,expect,test} from 'vitest';
+import {RuntimePanel,type Runtime} from './RuntimePanel';
+afterEach(cleanup);
+const runtime:Runtime={demo_mode:false,session_id:'session-1',status:'RUNNING',mode:'SHADOW',started_at:'2026-09-18T00:00:00Z',elapsed_seconds:12,heartbeat:'LIVE',last_event_at:null,last_market_event_at:null,last_closed_candle_at:null,last_state_update_at:null,market:'btc_mxn',interval:'1m',strategy_id:'reference',quality:'VALID',risk_status:'NORMAL',accounting_status:'PASS',current_candle:null,market_snapshot:null,events:[]};
+test('runtime shows authoritative session and safety without controls',()=>{render(<RuntimePanel runtime={runtime} market/>);expect(screen.getByText('RUNNING')).toBeTruthy();expect(screen.getByText('session-1')).toBeTruthy();expect(screen.getByText('12s')).toBeTruthy();expect(screen.getByText('No accepted trades in current candle')).toBeTruthy();expect(screen.queryAllByRole('button')).toHaveLength(0)});
+test('open candle is informational and retains last snapshot on disconnect',()=>{const candle={open:'1000',high:'1002',low:'999',last:'1001',volume:'0.03',trade_count:3,interval_start:'2026-09-18T00:00:00Z',interval_end:'2026-09-18T00:01:00Z',status:'OPEN'};render(<RuntimePanel runtime={{...runtime,current_candle:candle}} disconnected market/>);expect(screen.getByText('OPEN CANDLE')).toBeTruthy();expect(screen.getByText('1001')).toBeTruthy();expect(screen.getByText('Informational only · Never a closed strategy input')).toBeTruthy();expect(screen.getAllByText('DISCONNECTED')).toHaveLength(3);expect(screen.queryByText(/Closes in/)).toBeNull()});
+test.each(['STOPPED','HALTED','STOPPING','STARTING'])('status %s is not a frontend financial inference',(status)=>{render(<RuntimePanel runtime={{...runtime,status}}/>);expect(screen.getByText(status)).toBeTruthy()});
