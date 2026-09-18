@@ -17,6 +17,12 @@ Run `autofund dashboard --demo` for offline golden data, or `autofund dashboard
 build is served from `frontend/dist`; development uses `npm run dev` in
 `frontend/`. The demo labels the same SHADOW and disabled-trading safety state.
 
+Run `npm run test:e2e` after `npm run build` for Chromium functional and visual
+coverage. It uses deterministic demo data at 1440x900 and 390x844. The eight
+Playwright image baselines are versioned beside the E2E test. Use
+`npm run test:e2e:update` only for an intentional rendering change, followed by
+manual visual review; it is not part of ordinary test execution.
+
 The frontend presents Overview, Market, Activity, Ledger, Sessions and System
 tabs, quality counters, equity and candle visualization panels. It is a SPA,
 has no SSR, and has no financial action buttons. SSE supplies snapshot updates;
