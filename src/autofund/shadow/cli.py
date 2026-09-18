@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--closed-candles", type=int)
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--resume", action="store_true")
+    run.add_argument("--no-open-dashboard", action="store_true")
     run.add_argument(
         "--account-fees",
         action="store_true",
@@ -53,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parser.parse_args(argv)
         if args.command == "run":
+            from autofund.dashboard.runtime import ensure_dashboard
+
             config = ShadowConfig(
                 initial_equity=args.initial_equity,
                 max_deployment=args.max_deployment,
@@ -76,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
                     ).fee_schedule(args.book)
                 except StrictReadOnlyLimitation:
                     fee = None  # Public fee schedule, no permission escalation.
+            if not args.no_open_dashboard:
+                print(f"Dashboard available at: {ensure_dashboard(args.output)}")
             result = run_public(
                 output=args.output,
                 book=args.book,

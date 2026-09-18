@@ -23,6 +23,12 @@ Playwright image baselines are versioned beside the E2E test. Use
 `npm run test:e2e:update` only for an intentional rendering change, followed by
 manual visual review; it is not part of ordinary test execution.
 
+Operational `autofund shadow run` starts or reuses the local dashboard at
+`http://127.0.0.1:8000`, waits for its health endpoint and makes one best-effort
+default-browser request before capture begins. `--no-open-dashboard` opts out.
+The launcher is localhost-only and browser/server failure cannot stop, alter or
+authorize the shadow session.
+
 The frontend presents Overview, Market, Activity, Ledger, Sessions and System
 tabs, quality counters, equity and candle visualization panels. It is a SPA,
 has no SSR, and has no financial action buttons. SSE supplies snapshot updates;

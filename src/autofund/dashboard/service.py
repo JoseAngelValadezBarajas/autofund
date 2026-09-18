@@ -74,7 +74,12 @@ class DashboardDataProvider:
         return str(self.result.get("result_fingerprint", ""))[:16]
 
     def health(self) -> models.Health:
-        result = self.result
+        try:
+            result = self.result
+        except FileNotFoundError:
+            return models.Health(
+                market_data_status="INVALID", accounting="FAIL", current_session_id=None
+            )
         last = self._frames[-1].observed_at.isoformat() if self._frames else self._header.get("start")
         return models.Health(
             demo_mode=self.demo, market_data_status=result["quality"], accounting="PASS", last_market_event_at=_utc(last), current_session_id=self.session_id()
