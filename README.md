@@ -15,6 +15,18 @@ CapitalManager, RiskEngine y PaperExecutionEngine mediante sus contratos.
 
 ## F4 - Bitso Production read-only and shadow trading
 
+## F4.5 - local monitoring dashboard
+
+F4.5 adds a local FastAPI + React dashboard over F4 artifacts. It is GET-only,
+shows shadow data only, and visibly labels Production trading as disabled.
+
+```powershell
+autofund dashboard --demo
+autofund dashboard --session artifacts/f4/live_session
+```
+
+See [F4.5 dashboard specification](docs/F4_5_DASHBOARD_SPEC.md).
+
 F4 adds a dedicated GET-only Production observer and deterministic virtual
 execution on real public trades/order-book snapshots. Real account balances are
 private by default and never fund the shadow wallet. Defaults are 50 MXN virtual

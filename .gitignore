@@ -11,3 +11,5 @@ artifacts/
 .env
 *.secret
 keys.json
+
+frontend/node_modules/
