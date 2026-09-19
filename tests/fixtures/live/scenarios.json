@@ -1,0 +1,6 @@
+{
+  "minimum_exceeds_cap": {"minimum": "11", "check": "value_limits"},
+  "stale_market": {"stale": true, "check": "market_freshness"},
+  "wide_spread": {"wide": true, "check": "spread"},
+  "insufficient_depth": {"liquid": false, "check": "liquidity"}
+}

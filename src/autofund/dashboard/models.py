@@ -16,7 +16,7 @@ class Health(DashboardModel):
     demo_mode: bool = False
     application_status: Literal["RUNNING"] = "RUNNING"
     environment: Literal["BITSO PRODUCTION"] = "BITSO PRODUCTION"
-    execution_mode: Literal["SHADOW"] = "SHADOW"
+    execution_mode: Literal["SHADOW", "MICRO-LIVE"] = "SHADOW"
     production_trading: Literal["DISABLED"] = "DISABLED"
     production_write_capability: Literal["BLOCKED"] = "BLOCKED"
     market_data_status: Literal["VALID", "DEGRADED", "INVALID"]
@@ -262,7 +262,7 @@ class RuntimeView(DashboardModel):
     snapshot_ready: bool = False
     session_id: str | None = None
     status: Literal["STARTING", "RUNNING", "STOPPING", "STOPPED", "DISCONNECTED", "HALTED"] = "STOPPED"
-    mode: Literal["SHADOW"] = "SHADOW"
+    mode: Literal["SHADOW", "MICRO-LIVE"] = "SHADOW"
     started_at: datetime | None = None
     elapsed_seconds: int = 0
     last_event_at: datetime | None = None
@@ -279,3 +279,26 @@ class RuntimeView(DashboardModel):
     quality: Literal["VALID", "DEGRADED", "INVALID"] = "VALID"
     heartbeat: Literal["LIVE", "STALE", "DISCONNECTED"] = "DISCONNECTED"
     events: list[RuntimeEvent] = Field(default_factory=list, max_length=500)
+    micro_live: "MicroLiveView | None" = None
+
+
+class LiveOrderView(DashboardModel):
+    origin_id: str
+    state: str
+    oid: str | None = None
+
+
+class MicroLiveView(DashboardModel):
+    mode: Literal["MICRO-LIVE"] = "MICRO-LIVE"
+    real_money: Literal[True] = True
+    auto_execution: Literal["DISABLED"] = "DISABLED"
+    allocated_capital: str
+    max_deployment_mxn: str
+    single_order_cap: str
+    cash_mxn: str
+    inventory_btc: str
+    cost_basis_mxn: str
+    realized_pnl_mxn: str
+    unresolved_orders: list[str]
+    orders: list[LiveOrderView]
+    ledger: list[LedgerEntry]

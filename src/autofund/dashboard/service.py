@@ -10,6 +10,7 @@ from autofund.replay.serialization import canonical_json
 from autofund.shadow.capture import read_capture, replay
 
 from . import models
+from .demo_micro import DemoMicroRuntime
 from .demo_runtime import DemoRuntime
 from .live import project_runtime, read_runtime
 
@@ -25,10 +26,11 @@ def _string(value: object, default: str = "0") -> str:
 class DashboardDataProvider:
     """Read-only projection from one complete or currently-appending F4 bundle."""
 
-    def __init__(self, artifacts: Path, *, demo: bool = False, runtime_path: Path | None = None, demo_live: bool = False) -> None:
+    def __init__(self, artifacts: Path, *, demo: bool = False, runtime_path: Path | None = None, demo_live: bool = False, demo_micro_live: bool = False) -> None:
         self.artifacts = artifacts
         self.demo = demo
         self.demo_runtime = DemoRuntime() if demo_live else None
+        self.demo_micro = DemoMicroRuntime() if demo_micro_live else None
         self.runtime_path = runtime_path
         self._live: dict[str, Any] | None = None
         self._runtime: dict[str, Any] | None = None
@@ -96,6 +98,8 @@ class DashboardDataProvider:
         return str(self.result.get("result_fingerprint", ""))[:16]
 
     def runtime(self) -> models.RuntimeView:
+        if self.demo_micro:
+            return self.demo_micro.snapshot()
         if self.demo_runtime:
             return self.demo_runtime.snapshot()
         if self.runtime_path:
@@ -108,6 +112,11 @@ class DashboardDataProvider:
         return models.RuntimeView(demo_mode=self.demo)
 
     def health(self) -> models.Health:
+        runtime = self.runtime()
+        if runtime.mode == "MICRO-LIVE":
+            return models.Health(demo_mode=runtime.demo_mode, execution_mode="MICRO-LIVE",
+                                market_data_status=runtime.quality, accounting=runtime.accounting_status,
+                                current_session_id=runtime.session_id, last_market_event_at=runtime.last_market_event_at)
         try:
             result = self.result
         except FileNotFoundError:

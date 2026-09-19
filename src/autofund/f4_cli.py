@@ -4,6 +4,10 @@ import sys
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "live":
+        from autofund.live.cli import main as live_main
+
+        return live_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "dashboard":
         from autofund.dashboard.cli import main as dashboard_main
 

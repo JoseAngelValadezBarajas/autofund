@@ -84,13 +84,17 @@ def create_app(provider: DashboardDataProvider, dist: Path | None = None) -> Fas
     @app.get("/api/v1/stream")
     async def stream(request: Request, data: Provider) -> StreamingResponse:
         async def events() -> AsyncIterator[str]:
+            step = 0
             while not await request.is_disconnected():
-                payload = {"runtime": data.runtime().model_dump(mode="json")}
+                runtime = data.demo_micro.snapshot(step) if data.demo_micro else data.runtime()
+                payload = {"runtime": runtime.model_dump(mode="json")}
                 try:
-                    payload.update(overview=data.overview().model_dump(mode="json"), quality=data.quality().model_dump(mode="json"))
+                    if runtime.mode != "MICRO-LIVE":
+                        payload.update(overview=data.overview().model_dump(mode="json"), quality=data.quality().model_dump(mode="json"))
                 except FileNotFoundError:
                     pass
                 yield f"event: snapshot\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
+                step += 1
                 await asyncio.sleep(3)
         return StreamingResponse(events(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
 
