@@ -19,6 +19,35 @@ from .telemetry import SessionTelemetry
 AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
+PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
+# Operator-actionable notes for blocker names that are not self-explanatory. The
+# gate itself is unchanged; these only describe what the exact blocker means.
+BLOCKER_GUIDANCE: dict[str, str] = {
+    "PERMISSIONS_FAIL": "Exchange key permissions are not attested; the exact F5 attestation variable must be "
+                        "set to true by the operator out of band. This is never defaulted by the application.",
+    "SLIPPAGE_POLICY_FAIL": "No explicit slippage policy is configured for the session.",
+    "AUTHENTICATION_FAIL": "Production credentials were rejected; no trading is possible.",
+    "EXCHANGE_AVAILABLE_FAIL": "Exchange MXN is below the single-order cap; the order is not executable.",
+    "VALUE_LIMITS_FAIL": "Single-order cap is below the exchange minimum value; not executable.",
+    "LIVE_CREDENTIALS_MISSING_OR_INVALID": "Production credentials are absent or invalid; set the F5 live "
+                                          "credential environment variables before starting the application.",
+    "PRODUCTION_PREFLIGHT_UNAVAILABLE": "The Production preflight could not read the exchange; no trading is possible.",
+    "UNRESOLVED_ORDER": "A previous order is unresolved; reconciliation must complete before trading.",
+}
+
+
+class SessionStartBlocked(LiveError):
+    """Recoverable readiness blocker found before a session is authorized.
+
+    This is an ordinary "not ready" outcome, not an execution failure: no
+    exchange write happened, automatic execution stays disabled and the
+    application returns to STOPPED so the operator can retry once the blocker
+    clears. HALTED stays reserved for genuinely unsafe states.
+    """
+
+    def __init__(self, blockers: tuple[str, ...]) -> None:
+        self.blockers = tuple(blockers) or ("PRODUCTION_PREFLIGHT_BLOCKED",)
+        super().__init__("PRODUCTION_PREFLIGHT_BLOCKED: " + ",".join(self.blockers))
 
 
 class AppState(StrEnum):
@@ -54,17 +83,27 @@ class TradingRunner(Protocol):
     def stop(self) -> None: ...
     def kill(self) -> None: ...
     def snapshot(self) -> dict[str, Any]: ...
+    def production_preflight(self) -> dict[str, Any]: ...
+    def refresh_production_preflight(self, event: Any = None) -> dict[str, Any]: ...
 
 
 class SafeIdleRunner:
-    """Safe runner shell: production adapters can stream decisions into it."""
+    """Safe runner shell: production adapters can stream decisions into it.
+
+    It owns no exchange transport, so it can never claim Production readiness.
+    """
 
     def __init__(self) -> None:
         self.running = False
         self.killed = False
+        self.preflight_status = PREFLIGHT_NOT_RUN
+        self.preflight_blockers: tuple[str, ...] = ("PRODUCTION_PREFLIGHT_NOT_RUN",)
+        self.preflight_warnings: tuple[str, ...] = ()
+        self.preflight_checked_at: datetime | None = None
 
     def startup(self) -> dict[str, Any]:
-        return {"connected": True, "reconciled": True, "unresolved_orders": []}
+        return {"connected": True, "reconciled": True, "unresolved_orders": [],
+                "production_preflight": self.production_preflight()}
 
     def start(self, config: SessionConfig, event: Any) -> None:
         self.running, self.killed = True, False
@@ -73,6 +112,16 @@ class SafeIdleRunner:
 
     def stop(self) -> None: self.running = False
     def kill(self) -> None: self.running, self.killed = False, True
+
+    def production_preflight(self) -> dict[str, Any]:
+        return {"status": self.preflight_status, "ready": self.preflight_status == PREFLIGHT_PASS,
+                "blocked": self.preflight_status != PREFLIGHT_PASS, "blockers": list(self.preflight_blockers),
+                "warnings": list(self.preflight_warnings), "checked_at": self.preflight_checked_at,
+                "exchange": "NONE", "write_transport": "UNUSED"}
+
+    def refresh_production_preflight(self, event: Any = None) -> dict[str, Any]:
+        return self.production_preflight()
+
     def snapshot(self) -> dict[str, Any]:
         return {"connected": True, "market_quality": "VALID", "accounting_status": "PASS",
                 "risk_status": "NORMAL", "cash_mxn": "50", "equity_mxn": "50", "deployed_mxn": "0",
@@ -81,7 +130,12 @@ class SafeIdleRunner:
 
 
 class ProductionAutonomousRunner(SafeIdleRunner):
-    """F5-backed production lifecycle; orders remain server-side and policy gated."""
+    """F5-backed production lifecycle; orders remain server-side and policy gated.
+
+    Readiness is produced only by the existing F5 GET-only preflight. Startup and
+    session start each run it; neither reuses a stale result. No order POST is
+    possible from this class: submission stays behind the strategy path.
+    """
 
     def __init__(self, journal_path: Path) -> None:
         super().__init__()
@@ -101,19 +155,86 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         from autofund.live.journal import LiveExecutionJournal
         from autofund.live.models import LiveConfig
 
-        credentials = LiveCredentials.from_environment()
+        try:
+            credentials = LiveCredentials.from_environment()
+        except Exception as exc:
+            # Credential problems are never silently downgraded to "ready".
+            self._block_with(str(exc.args[0]) if exc.args else "LIVE_CREDENTIALS_MISSING_OR_INVALID")
+            raise
         client = BitsoProductionLiveClient(credentials, single_order_cap=SINGLE_ORDER_CAP)
         self.journal = LiveExecutionJournal(self.journal_path)
         self.execution = LiveExecution(client, self.journal, LiveConfig(slippage_tolerance=Decimal("0.5")))
         if self.execution.unresolved:
             self.execution.recover()
-        self.last_preflight = self.execution.check()
-        return {"connected": True, "reconciled": not self.execution.unresolved,
-                "unresolved_orders": list(self.execution.unresolved), "preflight_ready": self.last_preflight.ready}
+        reconciled = not self.execution.unresolved
+        if reconciled:
+            # Existing F5 preflight, GET-only, executed once at startup.
+            ready, blockers, warnings = self._run_preflight()
+        else:
+            ready, blockers, warnings = False, ("UNRESOLVED_ORDER", *self.execution.unresolved), ()
+        self.preflight_status = PREFLIGHT_PASS if ready else PREFLIGHT_FAIL
+        self.preflight_blockers, self.preflight_warnings = blockers, warnings
+        self.preflight_checked_at = self.last_preflight.checked_at if self.last_preflight else datetime.now(UTC)
+        return {"connected": True, "reconciled": reconciled,
+                "unresolved_orders": list(self.execution.unresolved),
+                "preflight_ready": ready, "production_preflight": self.production_preflight()}
+
+    def _block_with(self, blocker: str) -> None:
+        self.preflight_status = PREFLIGHT_FAIL
+        self.preflight_blockers = (blocker,)
+        self.preflight_checked_at = datetime.now(UTC)
+
+    def _public_preflight(self) -> dict[str, Any]:
+        return self.last_preflight.public() if self.last_preflight else {}
+
+    def _run_preflight(self) -> tuple[bool, tuple[str, ...], tuple[str, ...]]:
+        try:
+            self.last_preflight = self.execution.check()
+        except Exception as exc:
+            self.last_preflight = None
+            message = exc.args[0] if isinstance(exc, LiveError) and exc.args else "PRODUCTION_PREFLIGHT_UNAVAILABLE"
+            return False, (str(message),), ()
+        checked = self.last_preflight
+        return checked.ready, tuple(checked.failures), tuple(checked.warnings)
+
+    def production_preflight(self) -> dict[str, Any]:
+        methods = list(self.execution.client.outbound_methods) if self.execution is not None else []
+        return {"status": self.preflight_status, "ready": self.preflight_status == PREFLIGHT_PASS,
+                "blocked": self.preflight_status != PREFLIGHT_PASS, "blockers": list(self.preflight_blockers),
+                "guidance": [BLOCKER_GUIDANCE[name] for name in self.preflight_blockers if name in BLOCKER_GUIDANCE],
+                "warnings": list(self.preflight_warnings), "checked_at": self.preflight_checked_at,
+                "exchange": "BITSO PRODUCTION", "write_transport": "UNUSED", "report": self._public_preflight(),
+                # Evidence that readiness costs zero exchange writes.
+                "production_get_count": sum(1 for method in methods if method == "GET"),
+                "production_post_count": sum(1 for method in methods if method == "POST")}
+
+    def _preflight_event(self, event: Any, passed: bool) -> None:
+        if event is None:
+            return
+        event("PRODUCTION_PREFLIGHT_PASS" if passed else "PRODUCTION_PREFLIGHT_FAIL", component="execution",
+              level="INFO" if passed else "WARNING",
+              message="GET-only Production readiness preflight " + ("passed" if passed else "blocked"),
+              blockers=list(self.preflight_blockers), warnings=list(self.preflight_warnings),
+              checks=self.last_preflight.checks if self.last_preflight else {})
+
+    def refresh_production_preflight(self, event: Any = None) -> dict[str, Any]:
+        """Discard the previous result and re-run the GET-only Production preflight."""
+        if self.execution is None:
+            return self.production_preflight()
+        ready, blockers, warnings = self._run_preflight()
+        self.preflight_status = PREFLIGHT_PASS if ready else PREFLIGHT_FAIL
+        self.preflight_blockers, self.preflight_warnings = blockers, warnings
+        self.preflight_checked_at = self.last_preflight.checked_at if self.last_preflight else datetime.now(UTC)
+        self._preflight_event(event, ready)
+        return self.production_preflight()
 
     def start(self, config: SessionConfig, event: Any) -> None:
-        if self.execution is None or self.last_preflight is None or not self.last_preflight.ready:
+        if self.execution is None:
             raise LiveError("PRODUCTION_PREFLIGHT_REQUIRED")
+        # A start decision must never reuse a preflight performed minutes ago.
+        self.refresh_production_preflight(event)
+        if self.preflight_status != PREFLIGHT_PASS:
+            raise SessionStartBlocked(self.preflight_blockers)
         super().start(config, event)
         self._event = event
         self._stop.clear()
@@ -224,6 +345,12 @@ class DemoAutonomousRunner(SafeIdleRunner):
         self.step = 0
         self.event: Any = None
 
+    def production_preflight(self) -> dict[str, Any]:
+        # Demo never contacts Bitso, so it must not claim Production readiness.
+        return {"status": PREFLIGHT_NOT_RUN, "ready": False, "blocked": True, "label": "NOT APPLICABLE",
+                "blockers": ["DEMO_MODE_NOT_PRODUCTION"], "warnings": [], "checked_at": None,
+                "exchange": "DEMO", "write_transport": "UNUSED"}
+
     def start(self, config: SessionConfig, event: Any) -> None:
         self.running, self.killed, self.step, self.event = True, False, 0, event
         event("MARKET_CONNECTED", component="market", message="Deterministic market connected")
@@ -267,7 +394,9 @@ class AutoFundOrchestrator:
     TRANSITIONS: ClassVar[dict[AppState, set[AppState]]] = {
         AppState.BOOTING: {AppState.RECOVERING, AppState.ERROR},
         AppState.RECOVERING: {AppState.STOPPED, AppState.HALTED, AppState.ERROR},
-        AppState.STOPPED: {AppState.STARTING}, AppState.STARTING: {AppState.RUNNING, AppState.HALTED, AppState.ERROR},
+        # STARTING -> STOPPED is the recoverable readiness blocker path: nothing
+        # was written, auto execution stayed off, and HALTED is not warranted.
+        AppState.STOPPED: {AppState.STARTING}, AppState.STARTING: {AppState.RUNNING, AppState.STOPPED, AppState.HALTED, AppState.ERROR},
         AppState.RUNNING: {AppState.STOPPING, AppState.HALTED},
         AppState.STOPPING: {AppState.STOPPED, AppState.HALTED},
         AppState.HALTED: {AppState.RECOVERING}, AppState.ERROR: {AppState.RECOVERING},
@@ -307,9 +436,15 @@ class AutoFundOrchestrator:
                 else:
                     self._transition(AppState.STOPPED)
                     self._checkpoint("RECOVERY_COMPLETED", component="orchestrator", message="Startup reconciliation passed")
-            except Exception:
+                    # Startup readiness is informational here; START re-runs it fresh.
+                    readiness = self.runner.production_preflight()
+                    self._checkpoint("PRODUCTION_PREFLIGHT_PASS" if readiness["ready"] else "PRODUCTION_PREFLIGHT_FAIL",
+                                     component="execution", level="INFO" if readiness["ready"] else "WARNING",
+                                     message="Startup GET-only Production readiness preflight",
+                                     blockers=readiness.get("blockers", []), warnings=readiness.get("warnings", []))
+            except Exception as exc:
                 self._transition(AppState.HALTED)
-                self.last_error = "STARTUP_RECOVERY_FAILED"
+                self.last_error = str(exc.args[0]) if exc.args else "STARTUP_RECOVERY_FAILED"
                 self._checkpoint("RECONCILIATION_FAIL", component="orchestrator", level="ERROR", message="Startup recovery failed")
             self.auto_execution = False
 
@@ -336,6 +471,16 @@ class AutoFundOrchestrator:
                 self.runner.start(config, self._checkpoint)
                 self._transition(AppState.RUNNING)
                 self._checkpoint("SESSION_STARTED", component="orchestrator", message="Automatic execution enabled for this session")
+            except SessionStartBlocked as blocked:
+                # Recoverable readiness failure: no exchange write happened and
+                # automatic execution stayed off. Remain STOPPED so the operator
+                # can retry once the blocker clears.
+                self.auto_execution = False
+                self.last_error = str(blocked)
+                self._transition(AppState.STOPPED)
+                self._checkpoint("SESSION_START_BLOCKED", component="control", level="WARNING",
+                                 message="Session start blocked by Production readiness", blockers=list(blocked.blockers))
+                raise
             except Exception:
                 self.auto_execution = False
                 self._transition(AppState.HALTED)
@@ -386,6 +531,17 @@ class AutoFundOrchestrator:
             "net_pnl_mxn": snap.get("realized_pnl_mxn", "0"), "fees_mxn": snap.get("fees_mxn", "0")},
             "execution_quality": {}, "halts": 1 if result == "HALTED" else 0})
 
+    def readiness(self) -> dict[str, Any]:
+        """Production readiness as shown before START; never invents a preflight."""
+        readiness = dict(self.runner.production_preflight())
+        readiness.setdefault("label", "READY" if readiness.get("ready") else "BLOCKED")
+        if readiness.get("ready"):
+            readiness["reason"] = ""
+        else:
+            readiness["reason"] = ("; ".join(readiness.get("blockers") or [])
+                                   or "PRODUCTION_PREFLIGHT_BLOCKED")
+        return readiness
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             if isinstance(self.runner, DemoAutonomousRunner) and self.state is AppState.RUNNING:
@@ -407,6 +563,7 @@ class AutoFundOrchestrator:
                     "max_deployment_mxn": "25", "single_order_cap_mxn": "11",
                     "session_config": asdict(self.session_config) if self.session_config else None,
                     "kill_triggered": self.kill_triggered, "last_error": self.last_error,
+                    "production_preflight": self.readiness(),
                     "champion": {**asdict(self.adaptive.champion), "fingerprint": self.adaptive.champion.fingerprint},
                     "market_regime": "NORMAL", "auto_promotion": False, "challengers": self.adaptive.challengers,
                     "telemetry": rows, **live}

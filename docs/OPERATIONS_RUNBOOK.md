@@ -2,7 +2,7 @@
 
 ## Start
 
-Build once with `cd frontend; npm ci; npm run build`, configure dedicated live credentials in environment variables, then run `autofund app`. The app reconciles and remains STOPPED. In the browser review the 50/25/11 MXN envelope and session limits, press **START AUTOFUND**, and type `START AUTOFUND REAL 50`.
+Build once with `cd frontend; npm ci; npm run build`, configure dedicated live credentials in environment variables, then run `autofund app`. The app reconciles, runs the GET-only Production preflight itself and remains STOPPED. No separate CLI or preflight command is required before using the web application. In the browser review the 50/25/11 MXN envelope, the **Production preflight READY / BLOCKED** indicator and its exact blocker, then press **START AUTOFUND** and type `START AUTOFUND REAL 50`. START re-runs a fresh GET-only preflight before enabling automatic execution; if it fails, the app stays STOPPED with automatic execution off and shows the precise blocker, and the operator can simply retry.
 
 ## Stop and kill
 

@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from autofund.live.models import LiveError
 
-from .orchestrator import AutoFundOrchestrator, SessionConfig
+from .orchestrator import AutoFundOrchestrator, SessionConfig, SessionStartBlocked
 
 
 class StartRequest(BaseModel):
@@ -82,6 +82,11 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
         try:
             orchestrator.start(SessionConfig(Decimal(body.max_session_loss_mxn), body.max_session_duration_seconds,
                                              body.max_orders_per_session), body.confirmation)
+        except SessionStartBlocked as exc:
+            # Recoverable readiness blocker: exact names, 409, application stays STOPPED.
+            raise HTTPException(status_code=409, detail={"code": "PRODUCTION_PREFLIGHT_BLOCKED",
+                                                         "blockers": list(exc.blockers),
+                                                         "message": str(exc)}) from None
         except (LiveError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         return orchestrator.snapshot()
