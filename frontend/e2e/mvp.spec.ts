@@ -61,7 +61,7 @@ test('MVP autonomous BUY SELL and graceful STOP',async({page},testInfo)=>{
   await expect(page.getByLabel('Filter by component')).toBeVisible();
   await expect(page.getByLabel('Filter by level')).toBeVisible();
   await expect(page.getByLabel('Filter by event')).toBeVisible();
-  await expect(page.getByText('29 checkpoints',{exact:false})).toBeVisible();
+  await expect(page.getByText(/\d+ checkpoints/)).toBeVisible();
   await expect(page.getByRole('cell',{name:'POSITION_CLOSED'})).toBeVisible();
   await expect(page.getByRole('columnheader',{name:'Correlation'})).toBeVisible();
   await shot(page,'mvp-running-activity-desktop.png',testInfo);

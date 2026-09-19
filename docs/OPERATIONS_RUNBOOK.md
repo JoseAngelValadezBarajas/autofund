@@ -10,6 +10,28 @@ While RUNNING, Overview becomes a live operator view: session progress, live mar
 
 `OBSERVABILITY DEGRADED` means the backend lost both runtime heartbeat and operator publication; it never halts trading and does not depend on whether a browser tab is open.
 
+## Post-session review
+
+After a STOP the session is frozen: `elapsed`, `ended_at` and `stop_reason` are
+final and never advance again, and the runtime reports INACTIVE rather than STALE.
+Review the **Sessions** page for start/end/actual duration/stop reason, and the
+**Telemetry** page for the pipeline. Stages a completed NO_SIGNAL path never
+reached show `NOT_APPLICABLE`; `UNKNOWN` means genuinely undeterminable.
+
+`report.json`, `checkpoint_summary.json` and `handoff.json` are written per session
+and follow the diagnostics export. `handoff.json` carries deterministic
+`candidate_improvement_signals` such as `ZERO_SIGNALS_ACROSS_ELIGIBLE_EVALUATIONS`
+and `EXECUTION_PATH_NOT_EXERCISED`. These are facts, not recommendations.
+
+## Market scanner
+
+The **Scanner** page and Learning page market section show read-only research
+across the exchange's MXN books. It is GET-only, ranks research candidates (never
+financial actions) and refreshes every `--scan-interval` seconds (default 300).
+`--no-scanner` disables it. `MARKET_SCANNER_DEGRADED` means research is
+unavailable; Production trading is unaffected. The Production market remains
+BTC/MXN and cannot be changed from the browser.
+
 ## Stop and kill
 
 **STOP SESSION** prevents new intents, finishes known reconciliation, flushes artifacts and returns to STOPPED. **EMERGENCY KILL** immediately blocks new writes, disables strategy execution and enters HALTED; it does not sell an open position. Keep the application alive for inspection and recovery.

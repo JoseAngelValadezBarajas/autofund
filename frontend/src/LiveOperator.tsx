@@ -3,6 +3,8 @@ import {useEffect,useMemo,useState} from 'react';
 /** F4.6 runtime contract, extended additively for the MVP control plane. */
 export interface MvpRuntime {
   status:string; heartbeat:string; quality:string; mode:string; elapsed_seconds:number;
+  runtime_state:'RUNNING'|'INACTIVE'; market_stream:'ACTIVE'|'INACTIVE';
+  last_known_quality?:string|null; last_known_market_at?:string|null;
   last_event_at:string|null; last_market_event_at:string|null; last_closed_candle_at:string|null;
   current_candle:null|{status:string;interval_start:string;interval_end:string;open:string;high:string;
     low:string;last:string;volume:string;trade_count:number};
@@ -27,6 +29,7 @@ export interface MvpObservability {
 
 const unknown='UNKNOWN';
 const waiting='WAITING FOR DATA';
+const NA='NOT_APPLICABLE';
 /** Real-money mode must never invent data. */
 const age=(at:string|null|undefined,now:number)=>at?`${Math.max(0,Math.floor((now-Date.parse(at))/1000))}s ago`:waiting;
 export const fmt=(value:unknown)=>value===null||value===undefined||value===''?unknown:String(value);
@@ -168,12 +171,24 @@ export function LiveActivityPage({events,now}:{events:MvpRuntime['events'];now:n
 /** Telemetry page: operational metrics without external tooling. */
 export function LiveTelemetryPage({model,now}:{model:MvpObservability;now:number}){
   const {runtime,observability,metrics}=model,durations=metrics.durations_ms??{};
-  const duration=(name:string)=>durations[name]?`${durations[name].last_ms} ms (max ${durations[name].max_ms} ms, n=${durations[name].count})`:unknown;
+  const duration=(name:string)=>durations[name]?`${durations[name].last_ms} ms (max ${durations[name].max_ms} ms, n=${durations[name].count})`:NA;
+  const inactive=runtime.runtime_state==='INACTIVE';
   return <>
-    <Cards rows={[['Observability',observability.status],['Heartbeat age',observability.heartbeat_age_seconds==null?unknown:`${Math.round(observability.heartbeat_age_seconds)}s`],
-      ['Publication age',observability.publication_age_seconds==null?unknown:`${Math.round(observability.publication_age_seconds)}s`],
-      ['SSE status',String(runtime.heartbeat)],['Market event age',age(runtime.last_market_event_at,now)],['Market quality',String(runtime.quality)],
-      ['Market events',String(metrics.market_events??0)],['Market unavailable',String(metrics.market_unavailable??0)]]}/>
+    {inactive
+      ?<><p className="process-flow">The trading runtime is intentionally stopped. Ageing heartbeat and event
+        timestamps are historical facts, not incidents.</p>
+        <Cards rows={[['Application','ONLINE'],['Control SSE','CONNECTED'],['Trading runtime','INACTIVE'],
+          ['Market stream','INACTIVE'],['Session',String(runtime.status)],
+          ['Last market quality',String(runtime.last_known_quality??runtime.quality)],
+          ['Last market event',runtime.last_market_event_at??unknown],
+          ['Observability',observability.status]]}/></>
+      :<Cards rows={[['Observability',observability.status],
+          ['Heartbeat age',observability.heartbeat_age_seconds==null?unknown:`${Math.round(observability.heartbeat_age_seconds)}s`],
+          ['Publication age',observability.publication_age_seconds==null?unknown:`${Math.round(observability.publication_age_seconds)}s`],
+          ['Runtime',runtime.runtime_state],['Market stream',runtime.market_stream],
+          ['SSE status',String(runtime.heartbeat)],['Market event age',age(runtime.last_market_event_at,now)],
+          ['Market quality',String(runtime.quality)],['Market events',String(metrics.market_events??0)],
+          ['Market unavailable',String(metrics.market_unavailable??0)]]}/>}
     <h2>Latency</h2>
     <dl><dt>Market request RTT</dt><dd>{duration('market_request_rtt')}</dd>
       <dt>Strategy evaluation</dt><dd>{duration('strategy_evaluation')}</dd>
@@ -185,5 +200,7 @@ export function LiveTelemetryPage({model,now}:{model:MvpObservability;now:number
       ['Final market rejections',String(metrics.final_market_reject??0)],['Halts',String(metrics.halts??0)],
       ['Reconciliations',String(metrics.reconciliations??0)],['Ledger updates',String(metrics.ledger_updates??0)],
       ['Closed candles',String(metrics.closed_candles??0)],['No-signal decisions',String(metrics.no_signal??0)]]}/>
+    <h2>Pipeline</h2>
+    <Pipeline pipeline={model.pipeline}/>
   </>;
 }

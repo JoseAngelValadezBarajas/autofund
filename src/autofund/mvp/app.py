@@ -15,6 +15,9 @@ from .orchestrator import (
     DemoAutonomousRunner,
     ProductionAutonomousRunner,
 )
+from .scanner import MarketScanner
+from .scanner_demo import DemoScannerSource
+from .scanner_source import ReadOnlyScannerSource
 from .telemetry import configure_rotating_log
 
 
@@ -25,10 +28,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-open-browser", action="store_true")
     parser.add_argument("--demo", action="store_true", help="deterministic browser certification; never contacts Bitso")
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/mvp"))
+    parser.add_argument("--scan-interval", type=int, default=300,
+                        help="read-only market scanner refresh cadence in seconds")
+    parser.add_argument("--no-scanner", action="store_true", help="disable research-only market scanning")
     args = parser.parse_args(argv)
     configure_rotating_log(args.artifacts)
     runner = DemoAutonomousRunner() if args.demo else ProductionAutonomousRunner(DEFAULT_JOURNAL)
     orchestrator = AutoFundOrchestrator(args.artifacts, runner, demo=args.demo)
+    if not args.no_scanner and not args.demo:
+        # Research-only: GET-only discovery beside Production, never inside it.
+        # Demo mode must never contact the exchange, so it never starts a scanner.
+        try:
+            orchestrator.start_scanner(MarketScanner(ReadOnlyScannerSource(), interval_seconds=args.scan_interval),
+                                       interval_seconds=args.scan_interval)
+        except Exception:
+            pass  # Scanner availability never blocks the product.
+    elif args.demo:
+        # Deterministic, network-free research fixture for browser certification.
+        # A single synchronous scan keeps demo bytes reproducible; the background
+        # refresh loop would emit timing-dependent checkpoints.
+        demo_scanner = MarketScanner(DemoScannerSource())
+        orchestrator._scanner = demo_scanner
+        demo_scanner.scan(telemetry=lambda *a, **k: None)
     orchestrator.startup()
     dist = Path(__file__).parents[3] / "frontend" / "dist"
     app = create_mvp_app(orchestrator, dist, host=args.host, port=args.port)

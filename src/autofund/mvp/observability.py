@@ -28,6 +28,13 @@ MARKET_STALE_SECONDS = 15.0
 OBSERVABILITY_DEGRADED_SECONDS = 15.0
 PUBLICATION_INTERVAL_SECONDS = 2.0
 ACTIVE_STATES = frozenset({"STARTING", "RUNNING", "STOPPING"})
+# Terminal states: the runtime is intentionally inactive. Ageing is expected and
+# must never be reported as an incident.
+TERMINAL_STATES = frozenset({"STOPPED", "HALTED"})
+# Pipeline stage semantics.
+STAGE_WAITING = "WAITING"          # an active RUNNING pipeline may still reach it
+STAGE_NOT_APPLICABLE = "NOT_APPLICABLE"  # a completed path terminated before it
+STAGE_UNKNOWN = "UNKNOWN"          # genuinely undeterminable
 MAX_CANDLES = 40
 MAX_EVENTS = 200
 
@@ -109,6 +116,8 @@ class MvpObservability:
         self._last_evaluation_at: datetime | None = None
         self._market_events = 0
         self._market_unavailable = 0
+        self._last_known_quality: str | None = None
+        self._final_quality: str | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -142,8 +151,37 @@ class MvpObservability:
             self._thread = None
 
     def end(self, status: str) -> None:
+        """Terminal transition: freeze market health as a historical fact.
+
+        Once stopped, the runtime no longer publishes market events, so ageing
+        must not be reinterpreted as STALE or INVALID. The last observed quality
+        is retained, and stages the completed decision path never needed become
+        NOT_APPLICABLE rather than UNKNOWN.
+        """
         with self._lock:
             self.status = status
+            if status in TERMINAL_STATES:
+                # Freeze the last live quality as a historical fact before ageing
+                # could otherwise reinterpret deliberate inactivity as INVALID.
+                self._final_quality = _quality(_age(datetime.now(UTC), self._market_at))
+            if status != "DISCONNECTED":
+                self._finalize_stages()
+
+    def _finalize_stages(self) -> None:
+        """Resolve never-entered stages using the decision path actually taken."""
+        order = list(PIPELINE_STAGES)
+        last = -1
+        for index, stage in enumerate(order):
+            if self._stages[stage]["status"] != STAGE_WAITING:
+                last = index
+        if last < 0:
+            return
+        for index in range(last + 1, len(order)):
+            stage = order[index]
+            if self._stages[stage]["status"] == STAGE_WAITING:
+                self._stages[stage] = {"stage": stage, "status": STAGE_NOT_APPLICABLE, "at": None,
+                                       "event": None,
+                                       "detail": "Decision path terminated before this stage was required"}
 
     def heartbeat(self, *, status: str | None = None, at: datetime | None = None) -> None:
         """Internal runtime liveness; called by the runner loop itself.
@@ -188,6 +226,7 @@ class MvpObservability:
                                      "spread_bps": str(depth.spread_bps), "orderbook_at": _iso(depth.timestamp),
                                      "sequence": depth.sequence,
                                      "request_latency_ms": None if latency_ms is None else round(latency_ms)}
+            self._last_known_quality = _quality(0.0)
             self._set_stage("MARKET", "PASS", "Public BTC/MXN depth observed")
             self._fold_open_candle(depth, now)
             if latency_ms is not None:
@@ -295,13 +334,20 @@ class MvpObservability:
             now = now or datetime.now(UTC)
             heartbeat_age = _age(now, self._heartbeat_at)
             market_age = _age(now, self._market_at)
-            status = "DISCONNECTED" if self.status in ACTIVE_STATES and heartbeat_age is not None and heartbeat_age > HEARTBEAT_DISCONNECT_SECONDS else self.status
-            if status == "DISCONNECTED":
-                heartbeat = "DISCONNECTED"
-            elif status in {"STOPPED", "HALTED"}:
-                heartbeat = "STALE"
+            active = self.status in ACTIVE_STATES
+            terminal = self.status in TERMINAL_STATES
+            status = "DISCONNECTED" if active and heartbeat_age is not None and heartbeat_age > HEARTBEAT_DISCONNECT_SECONDS else self.status
+            if terminal:
+                # A deliberately stopped runtime is INACTIVE, never STALE or
+                # DISCONNECTED. Ageing is not an incident once trading has ended.
+                heartbeat = "INACTIVE"
+                market_stream = "INACTIVE"
+                runtime_state = "INACTIVE"
             else:
-                heartbeat = "LIVE" if market_age is not None and market_age <= MARKET_STALE_SECONDS else "STALE"
+                heartbeat = "DISCONNECTED" if status == "DISCONNECTED" else (
+                    "LIVE" if market_age is not None and market_age <= MARKET_STALE_SECONDS else "STALE")
+                market_stream = "ACTIVE" if market_age is not None and market_age <= MARKET_STALE_SECONDS else "INACTIVE"
+                runtime_state = "RUNNING"
             elapsed = int((now - self.started_at).total_seconds()) if self.started_at else 0
             raw = {"demo_mode": self.demo, "snapshot_ready": True, "session_id": self.session_id, "status": status,
                    "mode": "MVP-AUTONOMOUS", "started_at": _iso(self.started_at), "elapsed_seconds": max(0, elapsed),
@@ -309,7 +355,15 @@ class MvpObservability:
                    "last_closed_candle_at": _iso(self._closed_candle_at), "last_state_update_at": _iso(now),
                    "market": self.market, "interval": "1m", "strategy_id": None,
                    "current_candle": self._open_candle, "market_snapshot": self._market_snapshot,
-                   "quality": _quality(market_age), "risk_status": "HALTED" if self.status == "HALTED" else "NORMAL",
+                   # Retained historical facts, not a live health judgement.
+                   # While active, quality tracks the live market age (existing
+                   # F4.6 degradation semantics). Once terminal, the final observed
+                   # quality is retained and is never re-derived from inactivity.
+                   "quality": (self._final_quality or _quality(market_age)) if terminal else _quality(market_age),
+                   "last_known_quality": self._last_known_quality or _quality(market_age),
+                   "last_known_market_at": _iso(self._market_at),
+                   "runtime_state": runtime_state, "market_stream": market_stream,
+                   "risk_status": "HALTED" if self.status == "HALTED" else "NORMAL",
                    "accounting_status": "PASS", "heartbeat": heartbeat,
                    "events": [event.model_dump(mode="json") for event in self._events]}
             return RuntimeView.model_validate_json(canonical_json(raw)).model_dump(mode="json")

@@ -1,0 +1,60 @@
+{
+  "_comment": "Sanitized shape of the first real AutoFund Production session (MVP 0.1). No credentials, no account data, no exchange identifiers. 60 closed 1m candles, 58 eligible evaluations, zero signals, normal duration stop. Used to regression-test report, handoff, learning and post-session semantics deterministically.",
+  "schema": "autofund.session-fixture.v1",
+  "session_id": "mvp-20260918T210000-aaaaaaaa",
+  "market": "btc_mxn",
+  "started_at": "2026-09-18T21:00:00Z",
+  "ended_at": "2026-09-18T22:00:00Z",
+  "actual_runtime_seconds": 3600,
+  "configured_duration_seconds": 3600,
+  "stop_reason": "MAX_SESSION_DURATION_REACHED",
+  "counts": {
+    "market_events": 660,
+    "closed_candles": 60,
+    "strategy_evaluations": 58,
+    "no_signal_total": 61,
+    "signals": 0,
+    "order_intents": 0,
+    "orders": 0,
+    "fills": 0,
+    "partial_fills": 0,
+    "capital_rejections": 0,
+    "risk_rejections": 0,
+    "final_market_rejections": 0,
+    "reconciliations": 0,
+    "ledger_mutations": 0,
+    "halts": 0
+  },
+  "no_signal_breakdown": {
+    "NO_CLOSED_CANDLE": 1,
+    "INSUFFICIENT_HISTORY": 2,
+    "ENTRY_CONDITION_NOT_MET": 58
+  },
+  "eligible_evaluations": 58,
+  "near_signal_count": 0,
+  "distance_to_signal_min": "0.0031",
+  "distance_to_signal_max": "0.0212",
+  "financial": {
+    "authorized_capital_mxn": "50",
+    "initial_equity_mxn": "50",
+    "final_equity_mxn": "50",
+    "realized_pnl_mxn": "0",
+    "unrealized_pnl_mxn": "0",
+    "net_pnl_mxn": "0",
+    "fees_mxn": "0",
+    "max_drawdown_mxn": "0",
+    "max_deployment_mxn": "0"
+  },
+  "operations": {
+    "warnings": 0,
+    "errors": 0,
+    "halts": 0,
+    "kill_switch_activations": 0,
+    "accounting": "PASS",
+    "risk": "NORMAL"
+  },
+  "expected_handoff_signals": [
+    "ZERO_SIGNALS_ACROSS_ELIGIBLE_EVALUATIONS",
+    "EXECUTION_PATH_NOT_EXERCISED"
+  ]
+}

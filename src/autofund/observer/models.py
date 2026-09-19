@@ -16,6 +16,18 @@ def book_name(value: str) -> str:
     return value
 
 
+def any_book_name(value: str) -> str:
+    """Generic BASE_QUOTE validation for read-only discovery.
+
+    Discovery must be able to see every exchange book (including non-MXN ones)
+    before the scanner filters to the MXN universe. F4's own trading models
+    continue to require BASE/MXN via `book_name`.
+    """
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z0-9]+_[a-z0-9]+", value):
+        raise MarketDataInvalid("invalid exchange book name")
+    return value
+
+
 class FeeSource(StrEnum):
     CONFIRMED_ACCOUNT_FEE = "CONFIRMED_ACCOUNT_FEE"
     PUBLIC_SCHEDULE_FEE = "PUBLIC_SCHEDULE_FEE"
@@ -57,6 +69,37 @@ class MarketLimits:
                 raise MarketDataInvalid("inverted market constraints")
 
 
+@dataclass(frozen=True, slots=True)
+class BookConstraints:
+    """Exchange constraints for any book, used by read-only market discovery.
+
+    Deliberately quote-agnostic so the MXN filter can be applied by the scanner
+    rather than by the parser. No trading path accepts this type.
+    """
+
+    book: str
+    minimum_amount: Decimal
+    maximum_amount: Decimal
+    minimum_price: Decimal
+    maximum_price: Decimal
+    minimum_value: Decimal
+    maximum_value: Decimal
+    tick_size: Decimal
+
+    def __post_init__(self) -> None:
+        any_book_name(self.book)
+        for name in self.__dataclass_fields__:
+            if name != "book" and decimal(getattr(self, name), name) <= 0:
+                raise MarketDataInvalid("nonpositive market constraint")
+        for field_name in ("amount", "price", "value"):
+            if getattr(self, "minimum_" + field_name) > getattr(self, "maximum_" + field_name):
+                raise MarketDataInvalid("inverted market constraints")
+
+    @property
+    def quote_currency(self) -> str:
+        return self.book.split("_", 1)[1]
+
+
 @dataclass(frozen=True, repr=False)
 class ObservedBalance:
     currency: str
@@ -94,6 +137,31 @@ class PublicTrade:
             raise MarketDataInvalid("nonpositive public trade")
         if self.maker_side not in ("buy", "sell"):
             raise MarketDataInvalid("invalid maker side")
+
+
+@dataclass(frozen=True, slots=True)
+class Ticker:
+    """Public ticker summary. Read-only research input; never a trading signal."""
+
+    book: str
+    last: Decimal
+    bid: Decimal
+    ask: Decimal
+    high: Decimal
+    low: Decimal
+    volume: Decimal
+    vwap: Decimal
+    change_24h: Decimal
+
+    def __post_init__(self) -> None:
+        book_name(self.book)
+        for name in ("last", "bid", "ask", "high", "low", "vwap"):
+            if decimal(getattr(self, name), name) <= 0:
+                raise MarketDataInvalid("nonpositive ticker price")
+        if decimal(self.volume, "volume") < 0:
+            raise MarketDataInvalid("negative ticker volume")
+        if decimal(self.change_24h, "change_24h") is None:
+            raise MarketDataInvalid("invalid 24h change")
 
 
 @dataclass(frozen=True)

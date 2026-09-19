@@ -14,13 +14,25 @@ from autofund.decimal_utils import decimal
 from autofund.live.models import LiveError
 
 from .adaptive import AdaptiveEngine
+from .champion import DECISION_BUY, DECISION_SELL, evaluate_champion
 from .observability import MvpObservability
+from .scanner import MarketScanner
 from .telemetry import SessionTelemetry
 
 AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
+PRODUCT_VERSION = "AutoFund MVP 0.1.1"
+
+# Canonical stop reasons. The backend is authoritative; the UI never infers a
+# reason from elapsed time.
+STOP_OPERATOR = "OPERATOR_STOP"
+STOP_MAX_DURATION = "MAX_SESSION_DURATION_REACHED"
+STOP_MAX_ORDERS = "MAX_SESSION_ORDERS_REACHED"
+STOP_LOSS_LIMIT = "MAX_SESSION_LOSS_REACHED"
+STOP_KILL_SWITCH = "KILL_SWITCH_ACTIVATED"
+STOP_RUNNER_FAILURE = "EXECUTION_FAILURE"
 # Operator-actionable notes for blocker names that are not self-explanatory. The
 # gate itself is unchanged; these only describe what the exact blocker means.
 BLOCKER_GUIDANCE: dict[str, str] = {
@@ -81,6 +93,8 @@ class SessionConfig:
 
 
 class TradingRunner(Protocol):
+    observability: MvpObservability
+
     def startup(self) -> dict[str, Any]: ...
     def start(self, config: SessionConfig, event: Any) -> None: ...
     def stop(self) -> None: ...
@@ -114,8 +128,13 @@ class SafeIdleRunner:
         event("MARKET_CONNECTED", component="market", message="BTC/MXN market stream ready")
         event("NO_SIGNAL", component="strategy", message="No closed-candle signal yet")
 
-    def stop(self) -> None: self.running = False
-    def kill(self) -> None: self.running, self.killed = False, True
+    def stop(self) -> None:
+        self.running = False
+        self.observability.end("STOPPED")
+
+    def kill(self) -> None:
+        self.running, self.killed = False, True
+        self.observability.end("HALTED")
 
     def production_preflight(self) -> dict[str, Any]:
         return {"status": self.preflight_status, "ready": self.preflight_status == PREFLIGHT_PASS,
@@ -152,6 +171,10 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         self._thread: threading.Thread | None = None
         self._closes: list[Decimal] = []
         self._last_minute: str | None = None
+        # Certified Champion identity; supplied by the orchestrator at start so
+        # the runner records the exact profile the decision came from.
+        self._strategy_fingerprint = ""
+        self._champion_fingerprint: str | None = None
 
     def startup(self) -> dict[str, Any]:
         from autofund.live.client import BitsoProductionLiveClient, LiveCredentials
@@ -248,6 +271,7 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             raise SessionStartBlocked(self.preflight_blockers)
         super().start(config, event)
         self._event = event
+        self._strategy_fingerprint = self._champion_fingerprint or ""
         self.observability.heartbeat(status="RUNNING")
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="autofund-trading-runner", daemon=True)
@@ -286,28 +310,34 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             self._stop.wait(5)
 
     def _evaluate(self, close: Decimal) -> None:
-        if not self.running or self.killed or len(self._closes) < 3:
-            self._event("NO_SIGNAL", component="strategy", message="Insufficient closed-candle evidence")
+        """Evaluate the certified Champion on one closed candle.
+
+        The decision comes from the single Champion implementation, and the same
+        call returns the evidence telemetry persists. Behavior is unchanged from
+        the previously inlined logic.
+        """
+        if not self.running or self.killed:
             return
         started = monotonic()
-        self._event("STRATEGY_EVALUATED", component="strategy", message="Certified mean-reversion profile evaluated")
         position = self.execution.wallet.positions.get("BTC/MXN")
-        average = sum(self._closes, Decimal("0")) / len(self._closes)
-        if position is None or position.quantity == 0:
-            if close < average * Decimal("0.999"):
-                self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
-                self.handle_signal("BUY")
-            else:
-                self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
-                self._event("NO_SIGNAL", component="strategy", message="Champion chose no trade")
+        quantity = position.quantity if position is not None else Decimal("0")
+        cost_basis = position.cost_basis_mxn if position is not None else Decimal("0")
+        evidence = evaluate_champion(market="BTC/MXN", closes=tuple(self._closes), quantity=quantity,
+                                     cost_basis_mxn=cost_basis, strategy_fingerprint=self._strategy_fingerprint)
+        payload = evidence.telemetry()
+        self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
+        if not evidence.eligible:
+            # Insufficient history is not a strategy evaluation; it is a documented
+            # precondition failure. Counts match the previously inlined behavior.
+            self._event("NO_SIGNAL", component="strategy", message=evidence.message, **payload)
+            return
+        self._event("STRATEGY_EVALUATED", component="strategy", message=evidence.message, **payload)
+        if evidence.decision == DECISION_BUY:
+            self.handle_signal("BUY")
+        elif evidence.decision == DECISION_SELL:
+            self.handle_signal("SELL")
         else:
-            average_cost = position.cost_basis_mxn / position.quantity
-            if close > average_cost * Decimal("1.002"):
-                self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
-                self.handle_signal("SELL")
-            else:
-                self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
-                self._event("NO_SIGNAL", component="strategy", message="Champion retained owned position")
+            self._event("NO_SIGNAL", component="strategy", message=evidence.message, **payload)
 
     def handle_signal(self, side: str) -> None:
         if not self.running or self.killed or self.execution.unresolved:
@@ -458,6 +488,13 @@ class AutoFundOrchestrator:
         self.adaptive = AdaptiveEngine()
         self.last_error: str | None = None
         self.kill_triggered = False
+        self.session_ended_at: datetime | None = None
+        self.session_stop_reason: str | None = None
+        self._requested_stop: str | None = None
+        self._scanner: MarketScanner | None = None
+        self._scanner_thread: threading.Thread | None = None
+        self._scanner_stop = threading.Event()
+        self._scanner_interval = 300
         self._session_monotonic: float | None = None
         self._lock = threading.RLock()
         self._checkpoint("APP_BOOT", component="application", message="AutoFund MVP process initialized")
@@ -514,6 +551,10 @@ class AutoFundOrchestrator:
             self.session_id = "mvp-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:8]
             self.session_config, self.session_started_at = config, datetime.now(UTC)
             self._session_monotonic = monotonic()
+            self.session_ended_at = self.session_stop_reason = self._requested_stop = None
+            # The Champion is fixed for the whole session and cannot change mid-session.
+            if isinstance(self.runner, ProductionAutonomousRunner):
+                self.runner._champion_fingerprint = self.adaptive.champion.fingerprint
             self.runner.observability.begin(self.session_id, self.session_started_at)
             self.telemetry = SessionTelemetry(self.artifacts, self.session_id)
             self._checkpoint("SESSION_START_REQUESTED", component="control", message="Operator authorized bounded real session",
@@ -545,7 +586,10 @@ class AutoFundOrchestrator:
                 raise LiveError("APP_NOT_RUNNING")
             self._transition(AppState.STOPPING)
             self.auto_execution = False
-            self._checkpoint("SESSION_STOP_REQUESTED", component="control", message=reason)
+            # A guard-triggered stop has already recorded its canonical reason.
+            self._requested_stop = self._requested_stop or STOP_OPERATOR
+            self._checkpoint("SESSION_STOP_REQUESTED", component="control", message=reason,
+                             stop_reason=self._stop_reason())
             self.runner.stop()
             self._finish("STOPPED")
             self._transition(AppState.STOPPED)
@@ -555,6 +599,7 @@ class AutoFundOrchestrator:
             if self.state not in {AppState.RUNNING, AppState.STOPPING}:
                 raise LiveError("APP_NOT_ACTIVE")
             self.auto_execution, self.kill_triggered = False, True
+            self._requested_stop = STOP_KILL_SWITCH
             self.runner.kill()
             self._checkpoint("KILL_SWITCH_TRIGGERED", component="control", level="CRITICAL", message=reason)
             self._transition(AppState.HALTED)
@@ -568,24 +613,115 @@ class AutoFundOrchestrator:
             if loss >= self.session_config.max_session_loss_mxn:
                 self._checkpoint("LOSS_LIMIT_HIT", component="risk", level="CRITICAL", message="Session loss limit reached", loss_mxn=loss)
                 self.auto_execution = False
+                self._requested_stop = STOP_LOSS_LIMIT
                 self.runner.kill()
                 self._transition(AppState.HALTED)
                 self._checkpoint("AUTO_HALT_TRIGGERED", component="risk", level="CRITICAL", message="Loss-limit halt")
                 self._finish("HALTED")
 
+    def _stop_reason(self, *_: object) -> str:
+        """Canonical, backend-authoritative reason for the current stop.
+
+        The reason is recorded when the stop is requested, never inferred from
+        elapsed time or from the caller.
+        """
+        if self._requested_stop is not None:
+            return self._requested_stop
+        if self.last_error is not None:
+            return STOP_RUNNER_FAILURE
+        return STOP_OPERATOR
+
     def _finish(self, result: str) -> None:
+        # Freeze session time exactly once, at finalization.
+        self.session_ended_at = datetime.now(UTC)
+        self.session_stop_reason = self._stop_reason()
         if self.telemetry is None:
             return
         if result == "STOPPED":
             self._checkpoint("SESSION_STOPPED", component="orchestrator", message="Session finalized")
         snap = self.runner.snapshot()
-        self.telemetry.finalize(result=result, facts={"metrics": {"orders": snap.get("orders", 0), "fills": snap.get("fills", 0),
-            "net_pnl_mxn": snap.get("realized_pnl_mxn", "0"), "fees_mxn": snap.get("fees_mxn", "0")},
-            "execution_quality": {}, "halts": 1 if result == "HALTED" else 0})
+        view = self._session_view()
+        metrics = {"orders": snap.get("orders", 0), "fills": snap.get("fills", 0),
+                   "net_pnl_mxn": snap.get("realized_pnl_mxn", "0"), "fees_mxn": snap.get("fees_mxn", "0")}
+        # Adaptive learning runs at completion only; it can never alter hard safety.
+        learning = self.adaptive.observe_session(rows=list(self.telemetry.rows), metrics=metrics,
+                                                 stop_reason=self.session_stop_reason,
+                                                 scanner=self._scanner.evidence() if self._scanner else None)
+        self._checkpoint("LEARNING_OBSERVATION", component="learning", level="INFO",
+                         message=learning.get("classification", "OBSERVED"),
+                         classification=learning.get("classification"), observations=learning.get("observations", []),
+                         sessions_observed=learning.get("sessions_observed"), challengers=len(self.adaptive.challengers))
+        self.telemetry.finalize(
+            result=result, stop_reason=self.session_stop_reason,
+            identity={"market": "btc_mxn", "profile_id": self.adaptive.champion.profile_id,
+                      "strategy_id": self.adaptive.champion.strategy_id,
+                      "champion_fingerprint": self.adaptive.champion.fingerprint},
+            config={**(asdict(self.session_config) if self.session_config else {}),
+                    "authorized_capital_mxn": str(AUTHORIZED_CAPITAL),
+                    "max_deployment_mxn": str(MAX_DEPLOYMENT), "single_order_cap_mxn": str(SINGLE_ORDER_CAP)},
+            time_facts={"actual_runtime_seconds": view["actual_runtime_seconds"],
+                        "configured_duration_seconds": view["max_duration_seconds"]},
+            learning=learning,
+            facts={"metrics": metrics,
+                   "initial_equity_mxn": str(AUTHORIZED_CAPITAL),
+                   "final_equity_mxn": str(snap.get("equity_mxn", AUTHORIZED_CAPITAL)),
+                   "unrealized_pnl_mxn": str(snap.get("unrealized_pnl_mxn", "0")),
+                   "max_deployment_mxn": str(snap.get("deployed_mxn", "0")),
+                   "execution_quality": {}, "halts": 1 if result == "HALTED" else 0})
 
     def shutdown(self) -> None:
         """Release the backend publication thread; never changes financial state."""
         self.runner.observability.close()
+        self.stop_scanner()
+
+    # ------------------------------------------------------------- scanner
+    def start_scanner(self, scanner: MarketScanner, *, interval_seconds: int | None = None) -> None:
+        """Start research-only background scanning.
+
+        The scanner is isolated from Production: it never creates an order
+        intent, never reaches the ExecutionEngine and cannot change the live
+        market. Its failures degrade the scanner only.
+        """
+        self._scanner = scanner
+        self._scanner_interval = interval_seconds or scanner.interval_seconds
+        if self._scanner_thread is not None and self._scanner_thread.is_alive():
+            return
+        self._scanner_stop.clear()
+        self._scanner_thread = threading.Thread(target=self._scanner_loop, name="mvp-market-scanner", daemon=True)
+        self._scanner_thread.start()
+
+    def stop_scanner(self) -> None:
+        self._scanner_stop.set()
+        thread, self._scanner_thread = self._scanner_thread, None
+        if thread is not None:
+            thread.join(timeout=2)
+
+    def _scanner_loop(self) -> None:
+        while not self._scanner_stop.is_set():
+            self.scan_markets()
+            self._scanner_stop.wait(self._scanner_interval)
+
+    def scan_markets(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """One bounded scan. Research only; never affects trading."""
+        scanner = self._scanner
+        if scanner is None:
+            return {}
+        try:
+            return dict(scanner.scan(now=now, telemetry=self._checkpoint))
+        except Exception:
+            # Even an unexpected scanner failure stays contained to research.
+            return dict(scanner.evidence())
+
+    def scanner_evidence(self) -> dict[str, Any]:
+        return dict(self._scanner.evidence()) if self._scanner is not None else {
+            "scanner_ran": False, "degraded": False, "universe_size": 0, "candidates": [],
+            "eligible": [], "rejected": [], "shadow": [], "live_market": "btc_mxn",
+            "production_market_rotation": "DISABLED", "market_promotion": "DISABLED",
+            "read_only": True, "execution_path_to_production": "NOT_PRESENT"}
+
+    def learning_view(self) -> dict[str, Any]:
+        scanner = self._scanner.scanner_evidence() if self._scanner is not None else None
+        return dict(self.adaptive.learning_view(scanner=scanner))
 
     def readiness(self) -> dict[str, Any]:
         """Production readiness as shown before START; never invents a preflight."""
@@ -599,18 +735,30 @@ class AutoFundOrchestrator:
         return readiness
 
     def _session_view(self) -> dict[str, Any]:
-        """Runtime progress for the operator: elapsed, remaining, bounded usage."""
+        """Runtime progress. Frozen once the session reaches a terminal state."""
         with self._lock:
             if self.session_config is None or self._session_monotonic is None:
-                return {"elapsed_seconds": None, "remaining_seconds": None, "max_duration_seconds": None,
-                        "max_orders_per_session": None, "max_session_loss_mxn": None}
-            elapsed = max(0, int(monotonic() - self._session_monotonic))
+                return {"started_at": None, "ended_at": None, "elapsed_seconds": None,
+                        "actual_runtime_seconds": None, "remaining_seconds": None,
+                        "max_duration_seconds": None, "max_orders_per_session": None,
+                        "max_session_loss_mxn": None, "stop_reason": None, "frozen": False}
             config = self.session_config
-            return {"elapsed_seconds": elapsed,
-                    "remaining_seconds": max(0, config.max_session_duration_seconds - elapsed),
-                    "max_duration_seconds": config.max_session_duration_seconds,
+            ended = self.session_ended_at
+            if ended is not None:
+                # Terminal state: elapsed is a historical fact and never advances.
+                elapsed = max(0, int((ended - self.session_started_at).total_seconds())) if self.session_started_at else 0
+                remaining = max(0, config.max_session_duration_seconds - elapsed)
+                frozen = True
+            else:
+                elapsed = max(0, int(monotonic() - self._session_monotonic))
+                remaining = max(0, config.max_session_duration_seconds - elapsed)
+                frozen = False
+            return {"started_at": self.session_started_at, "ended_at": ended,
+                    "elapsed_seconds": elapsed, "actual_runtime_seconds": elapsed if frozen else None,
+                    "remaining_seconds": remaining, "max_duration_seconds": config.max_session_duration_seconds,
                     "max_orders_per_session": config.max_orders_per_session,
-                    "max_session_loss_mxn": str(config.max_session_loss_mxn)}
+                    "max_session_loss_mxn": str(config.max_session_loss_mxn),
+                    "stop_reason": self.session_stop_reason, "frozen": frozen}
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -622,12 +770,14 @@ class AutoFundOrchestrator:
                 if AUTHORIZED_CAPITAL - equity >= self.session_config.max_session_loss_mxn:
                     self.observe_equity(equity)
                 elif int(live.get("orders", 0)) >= self.session_config.max_orders_per_session:
-                    self.stop("maximum orders reached")
+                    self._requested_stop = STOP_MAX_ORDERS
+                    self.stop(STOP_MAX_ORDERS)
                 elif self._session_monotonic is not None and monotonic() - self._session_monotonic >= self.session_config.max_session_duration_seconds:
-                    self.stop("maximum session duration reached")
+                    self._requested_stop = STOP_MAX_DURATION
+                    self.stop(STOP_MAX_DURATION)
             rows = list(self.telemetry.rows[-100:]) if self.telemetry else []
             observability = self.runner.observability
-            return {"schema_version": "autofund.mvp.v1", "product_version": "AutoFund MVP 0.1",
+            return {"schema_version": "autofund.mvp.v1", "product_version": PRODUCT_VERSION,
                     "demo_mode": self.demo, "app_state": self.state, "mode": "REAL MONEY",
                     "auto_execution": self.auto_execution, "session_id": self.session_id,
                     "session_started_at": self.session_started_at, "authorized_capital_mxn": "50",
@@ -642,6 +792,8 @@ class AutoFundOrchestrator:
                     "market_state": observability.market_state(),
                     "pipeline": observability.pipeline(),
                     "strategy": observability.strategy(),
+                    "learning": self.learning_view(),
+                    "scanner": self.scanner_evidence(),
                     "candles": observability.candles(),
                     "metrics": observability.metrics(),
                     "champion": {**asdict(self.adaptive.champion), "fingerprint": self.adaptive.champion.fingerprint},

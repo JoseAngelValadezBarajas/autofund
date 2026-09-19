@@ -9,6 +9,7 @@ from autofund.replay.serialization import utc_timestamp
 
 from .errors import MarketDataInvalid
 from .models import (
+    BookConstraints,
     FeeSource,
     Level,
     MarketLimits,
@@ -16,6 +17,7 @@ from .models import (
     OrderBookSnapshot,
     PublicTrade,
     ShadowFee,
+    Ticker,
 )
 
 
@@ -105,6 +107,33 @@ def market(payload: object, book: str) -> tuple[MarketLimits, ShadowFee]:
         max(number(obj(t).get("taker")) for t in tiers), FeeSource.PUBLIC_SCHEDULE_FEE
     )
     return limits, fee
+
+
+def books(payload: object) -> tuple[BookConstraints, ...]:
+    """All available books, in exchange order. Discovery is dynamic, never hardcoded."""
+    result = []
+    for row in (obj(item) for item in array(payload)):
+        book = row.get("book")
+        if not isinstance(book, str) or not book:
+            raise MarketDataInvalid("invalid book name")
+        result.append(BookConstraints(
+            book,
+            *(number(row.get(k)) for k in (
+                "minimum_amount", "maximum_amount", "minimum_price", "maximum_price",
+                "minimum_value", "maximum_value", "tick_size"))))
+    if len({item.book for item in result}) != len(result):
+        raise MarketDataInvalid("duplicate available book")
+    return tuple(result)
+
+
+def ticker(payload: object, book: str) -> Ticker:
+    row = obj(payload)
+    if row.get("book") != book:
+        raise MarketDataInvalid("wrong ticker book")
+    return Ticker(book, number(row.get("last")), number(row.get("bid")), number(row.get("ask")),
+                  number(row.get("high")), number(row.get("low")), number(row.get("volume")),
+                  number(row.get("vwap")), number(row.get("change_24") if row.get("change_24") is not None
+                                                  else row.get("change24")))
 
 
 def balances(payload: object) -> tuple[ObservedBalance, ...]:

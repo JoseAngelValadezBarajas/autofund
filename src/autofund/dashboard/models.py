@@ -287,7 +287,14 @@ class RuntimeView(DashboardModel):
     risk_status: Literal["NORMAL", "HALTED", "UNKNOWN"] = "UNKNOWN"
     accounting_status: Literal["PASS", "FAIL", "UNKNOWN"] = "UNKNOWN"
     quality: Literal["VALID", "DEGRADED", "INVALID"] = "VALID"
-    heartbeat: Literal["LIVE", "STALE", "DISCONNECTED"] = "DISCONNECTED"
+    heartbeat: Literal["LIVE", "STALE", "DISCONNECTED", "INACTIVE"] = "DISCONNECTED"
+    # Additive post-session semantics. A deliberately stopped runtime is INACTIVE,
+    # not unhealthy: heartbeat/event age stops being an operational signal while
+    # the last observed market state is retained as a historical fact.
+    runtime_state: Literal["RUNNING", "INACTIVE"] = "INACTIVE"
+    market_stream: Literal["ACTIVE", "INACTIVE"] = "INACTIVE"
+    last_known_quality: str | None = None
+    last_known_market_at: datetime | None = None
     events: list[RuntimeEvent] = Field(default_factory=list, max_length=500)
     micro_live: "MicroLiveView | None" = None
 

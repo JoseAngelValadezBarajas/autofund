@@ -2,7 +2,6 @@
 
 import json
 import logging
-from collections import Counter
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -22,6 +21,9 @@ CHECKPOINTS = frozenset({
     "RECONCILIATION_PASS", "RECONCILIATION_FAIL", "LEDGER_UPDATED", "POSITION_OPENED", "POSITION_CLOSED",
     "LOSS_LIMIT_WARNING", "LOSS_LIMIT_HIT", "LEARNING_OBSERVATION", "CHALLENGER_CREATED",
     "CHALLENGER_EVALUATED", "CHALLENGER_PROMOTED", "CHALLENGER_REJECTED",
+    "MARKET_SCAN_STARTED", "MARKET_SCAN_COMPLETED", "MARKET_CANDIDATE_ELIGIBLE",
+    "MARKET_CANDIDATE_REJECTED", "MARKET_SHADOW_STARTED", "MARKET_SHADOW_EVALUATED",
+    "MARKET_SCANNER_DEGRADED",
 })
 SECRET_KEYS = {"api_key", "api_secret", "authorization", "control_token", "token"}
 
@@ -81,29 +83,41 @@ class SessionTelemetry:
             self.warnings.append(event)
         return row
 
-    def finalize(self, *, result: str, facts: dict[str, Any]) -> None:
-        counts = Counter(str(row["event"]) for row in self.rows)
+    def finalize(self, *, result: str, stop_reason: str | None = None, facts: dict[str, Any],
+                 identity: dict[str, Any] | None = None, config: dict[str, Any] | None = None,
+                 time_facts: dict[str, Any] | None = None, learning: dict[str, Any] | None = None) -> None:
+        """Write deterministic report, checkpoint summary and handoff."""
+        from .postmortem import (
+            build_checkpoint_summary,
+            build_handoff,
+            build_report,
+            scanner_evidence,
+        )
+
+        rows = list(self.rows)
         largest = max((value for values in self.durations.values() for value in values), default=0.0)
         ended = datetime.now(UTC)
-        summary = {
-            "schema": "autofund.checkpoint-summary.v1", "session_id": self.session_id,
-            "strategy_version": self.strategy_version, "started_at": self.started_at, "ended_at": ended,
-            "result": result, "checkpoint_count": self.sequence, "counts": dict(sorted(counts.items())),
-            "warnings": self.warnings, "largest_latency_ms": round(largest, 3), **_clean(facts),
-        }
-        handoff = {
-            "schema": "autofund.handoff.v1", "session_id": self.session_id,
-            "what_happened": result, "what_changed": [],
-            "what_failed": sorted({r["event"] for r in self.rows if r["level"] in {"ERROR", "CRITICAL"}}),
-            "what_was_rejected": sorted({r["event"] for r in self.rows if str(r["event"]).endswith("REJECT")}),
-            "risk_incidents": [r["event"] for r in self.rows if r["event"] in {"LOSS_LIMIT_HIT", "AUTO_HALT_TRIGGERED"}],
-            "execution_quality": _clean(facts.get("execution_quality", {})),
-            "strategy_performance": _clean(facts.get("metrics", {})),
-            "potential_improvement_areas": sorted(set(self.warnings)),
-        }
+        time_block = {"started_at": self.started_at.isoformat().replace("+00:00", "Z"),
+                      "ended_at": ended.isoformat().replace("+00:00", "Z"),
+                      "stop_reason": stop_reason, **(time_facts or {})}
+        identity_block = {"session_id": self.session_id, "run_id": self.run_id,
+                          "product_version": "AutoFund MVP 0.1.1",
+                          "strategy_version": self.strategy_version, **(identity or {})}
+        scanner = scanner_evidence(rows)
+        facts_with_latency = {**facts, "largest_latency_ms": round(largest, 3)}
+        learning_block = learning or {"classification": "NOT_EVALUATED", "observations": []}
+        report = build_report(rows, identity=identity_block, time_facts=time_block,
+                              config=config or {}, facts=facts_with_latency, scanner=scanner)
+        summary = build_checkpoint_summary(rows, session_id=self.session_id, run_id=self.run_id, result=result,
+                                           warnings=self.warnings, facts=facts_with_latency,
+                                           stop_reason=stop_reason, time_facts=time_block, learning=learning_block)
+        handoff = build_handoff(rows, report=report, result=result, stop_reason=stop_reason,
+                                scanner=scanner, learning=learning_block)
         for name, value in (("checkpoint_summary.json", summary), ("handoff.json", handoff),
-                            ("report.json", _clean(facts))):
-            (self.path / name).write_text(json.dumps(_clean(value), sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+                            ("report.json", report)):
+            (self.path / name).write_text(
+                json.dumps(_clean(value), sort_keys=True, separators=(",", ":"), default=str) + "\n",
+                encoding="utf-8")
 
 
 def configure_rotating_log(root: Path, *, debug: bool = False) -> logging.Logger:

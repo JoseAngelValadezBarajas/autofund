@@ -9,6 +9,7 @@ type Model=Partial<Omit<MvpObservability,'runtime'|'observability'>> & Overrides
 
 const baseRuntime:(over?:Overrides)=>MvpObservability['runtime']=over=>({
   status:'RUNNING',heartbeat:'LIVE',quality:'VALID',mode:'MVP-AUTONOMOUS',elapsed_seconds:42,
+  runtime_state:'RUNNING',market_stream:'ACTIVE',last_known_quality:'VALID',last_known_market_at:null,
   last_event_at:'2026-09-18T10:00:05Z',last_market_event_at:'2026-09-18T10:00:05Z',
   last_closed_candle_at:'2026-09-18T09:59:00Z',current_candle:null,market_snapshot:null,events:[],
   ...over});
@@ -155,7 +156,28 @@ test('telemetry page shows runtime metrics, latency and counts',()=>{
   expect(screen.getByText(/11.5 ms \(max 20.25 ms, n=3\)/)).toBeTruthy();
   expect(screen.getByText(/0.4 ms \(max 0.9 ms, n=2\)/)).toBeTruthy();
   expect(screen.getByText('12')).toBeTruthy();
-  expect(screen.getAllByText(/UNKNOWN/).length).toBeGreaterThan(0);
+  // A stage never exercised on an active session is WAITING, not UNKNOWN.
+  expect(screen.getAllByText('WAITING').length).toBeGreaterThan(0);
+});
+
+test('telemetry shows INACTIVE semantics for a deliberately stopped runtime',()=>{
+  const m=model({status:'STOPPED',heartbeat:'INACTIVE',runtime_state:'INACTIVE',market_stream:'INACTIVE',
+    last_known_quality:'VALID',last_market_event_at:'2026-09-18T10:00:05Z'});
+  render(<LiveTelemetryPage model={m} now={Date.now()}/>);
+  expect(screen.getByText('ONLINE')).toBeTruthy();
+  expect(screen.getByText('CONNECTED')).toBeTruthy();
+  expect(screen.getAllByText('INACTIVE').length).toBeGreaterThan(0);
+  expect(screen.getByText('Last market quality')).toBeTruthy();
+  expect(screen.getByText('VALID')).toBeTruthy();
+  // Stopped inactivity must never be presented as an operational incident.
+  expect(screen.queryByText('STALE')).toBeNull();
+  expect(screen.queryByText('INVALID')).toBeNull();
+});
+
+test('unexercised latency stages report NOT_APPLICABLE not UNKNOWN',()=>{
+  render(<LiveTelemetryPage model={model({metrics:{durations_ms:{}}})} now={Date.now()}/>);
+  expect(screen.getAllByText('NOT_APPLICABLE').length).toBe(4);
+  expect(screen.queryByText('UNKNOWN')).toBeNull();
 });
 
 test('candle chart shows waiting for data instead of fabricating candles',()=>{

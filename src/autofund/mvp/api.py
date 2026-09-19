@@ -54,7 +54,7 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
             # Release the backend publication thread; never touches financial state.
             orchestrator.shutdown()
 
-    app = FastAPI(title="AutoFund MVP 0.1", version="0.1.0", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app = FastAPI(title="AutoFund MVP 0.1.1", version="0.1.1", docs_url=None, redoc_url=None, lifespan=lifespan)
     control_token = secrets.token_urlsafe(32)
     allowed_hosts = {host, f"{host}:{port}", "localhost", f"localhost:{port}", "testserver"}
 
@@ -85,6 +85,12 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
 
     @app.get("/api/v1/mvp")
     def state() -> dict[str, Any]: return orchestrator.snapshot()
+
+    @app.get("/api/v1/mvp/scanner")
+    def scanner() -> dict[str, Any]: return orchestrator.scanner_evidence()
+
+    @app.get("/api/v1/mvp/learning")
+    def learning() -> dict[str, Any]: return orchestrator.learning_view()
 
     @app.post("/api/v1/control/start")
     def start(body: StartRequest, _: str | None = Header(default=None)) -> dict[str, Any]:

@@ -24,10 +24,19 @@ from .errors import (
     ReadUnavailable,
     StrictReadOnlyLimitation,
 )
-from .models import MarketLimits, ObservedBalance, ShadowFee, book_name
+from .models import (
+    BookConstraints,
+    MarketLimits,
+    ObservedBalance,
+    OrderBookSnapshot,
+    ShadowFee,
+    Ticker,
+    book_name,
+)
+from .parsing import depth
 
 PRODUCTION_BASE_URL = "https://bitso.com"
-PUBLIC_ENDPOINTS = frozenset({"available_books", "order_book", "trades"})
+PUBLIC_ENDPOINTS = frozenset({"available_books", "order_book", "trades", "ticker"})
 PRIVATE_ENDPOINTS = frozenset({"balance", "fees"})
 CONFIRMATION_MESSAGE = "Dedicated Bitso production read-only API key must be confirmed."
 
@@ -48,6 +57,7 @@ def validate_read(method: str, path: str, base_url: str = PRODUCTION_BASE_URL) -
     allowed_query = {
         "trades": {"book", "limit", "marker", "sort"},
         "order_book": {"book", "aggregate"},
+        "ticker": {"book"},
     }.get(endpoint, set())
     if set(query) - allowed_query or any(len(v) != 1 for v in query.values()):
         raise ReadOnlyViolation("query outside read-only allowlist")
@@ -202,6 +212,20 @@ class BitsoProductionReadOnlyClient:
 
     def market_info(self, book: str) -> tuple[MarketLimits, ShadowFee]:
         return parsing.market(self.read("available_books"), book_name(book))
+
+    def books(self) -> tuple[BookConstraints, ...]:
+        """All exchange books, for read-only market discovery. GET-only."""
+        return parsing.books(self.read("available_books"))
+
+    def available_books(self) -> tuple[BookConstraints, ...]:
+        """Alias kept explicit for discovery callers."""
+        return self.books()
+
+    def ticker(self, book: str) -> "Ticker":
+        return parsing.ticker(self.read("ticker", {"book": book_name(book)}), book_name(book))
+
+    def order_book(self, book: str) -> OrderBookSnapshot:
+        return depth(self.read("order_book", {"book": book_name(book)}), book_name(book))
 
     def balances(self) -> tuple[ObservedBalance, ...]:
         return parsing.balances(self.read("balance"))

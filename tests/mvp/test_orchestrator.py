@@ -64,7 +64,7 @@ def test_telemetry_is_ordered_correlated_and_generates_handoff(tmp_path):
     assert (folder / "checkpoint_summary.json").is_file()
     assert (folder / "handoff.json").is_file()
     assert "api_secret" not in (folder / "telemetry.jsonl").read_text()
-    assert json.loads((folder / "handoff.json").read_text())["schema"] == "autofund.handoff.v1"
+    assert json.loads((folder / "handoff.json").read_text())["schema"] == "autofund.handoff.v2"
 
 
 @pytest.mark.parametrize("loss", [Decimal("0"), Decimal("50.01")])

@@ -1,9 +1,10 @@
 import {useEffect,useState} from 'react';
 import {LiveActivityPage,LiveMarketPage,LiveOperatorView,LiveTelemetryPage,type MvpObservability,useTicker} from './LiveOperator';
+import {LearningPage,MarketScannerPage,type LearningView,type ScannerEvidence} from './MarketScanner';
 
-type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];session?:MvpObservability['session']};
+type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];session?:MvpObservability['session']&{started_at?:string|null;ended_at?:string|null;actual_runtime_seconds?:number|null;stop_reason?:string|null;frozen?:boolean};learning?:LearningView;scanner?:ScannerEvidence};
 
-const pages=['Overview','Market','Activity','Positions','Ledger','Sessions','Learning','Telemetry','System'];
+const pages=['Overview','Market','Activity','Positions','Ledger','Sessions','Learning','Telemetry','System','Scanner'];
 
 /** True when the backend published a real live observability model. */
 function live(data:Snapshot):MvpObservability|null{
@@ -98,18 +99,29 @@ export function MvpApp({initial}:{initial:Snapshot}){
 
       {page==='Sessions'&&<><dl>
         <dt>Current session</dt><dd>{data.session_id??'None'}</dd><dt>State</dt><dd>{data.app_state}</dd>
+        <dt>Market</dt><dd>{(data.learning?.scanner?.live_market??'btc_mxn').toUpperCase()}</dd>
+        <dt>Strategy / profile</dt><dd>{data.learning?.champion?.profile_id??data.champion.profile_id}</dd>
         <dt>Orders / fills</dt><dd>{data.orders} / {data.fills}</dd>
-        {model&&<><dt>Elapsed</dt><dd>{model.session.elapsed_seconds??'UNKNOWN'}s</dd>
-          <dt>Remaining</dt><dd>{model.session.remaining_seconds??'UNKNOWN'}s</dd>
+        {model&&<><dt>Started</dt><dd>{data.session?.started_at??'—'}</dd>
+          <dt>Ended</dt><dd>{data.session?.ended_at??(data.session?.frozen?'—':'IN PROGRESS')}</dd>
+          <dt>Actual duration</dt><dd>{data.session?.actual_runtime_seconds??data.session?.elapsed_seconds??'UNKNOWN'}s</dd>
+          <dt>Configured max duration</dt><dd>{model.session.max_duration_seconds??'UNKNOWN'}s</dd>
+          <dt>Stop reason</dt><dd>{data.session?.stop_reason??(data.session?.frozen?'UNKNOWN':'NOT_STOPPED')}</dd>
           <dt>Max orders</dt><dd>{model.session.max_orders_per_session??'UNKNOWN'}</dd>
           <dt>Loss limit</dt><dd>{model.session.max_session_loss_mxn??'UNKNOWN'} MXN</dd></>}
       </dl>{data.session_id&&<a className="export" href={`/api/v1/sessions/${data.session_id}/diagnostics`}>Export session diagnostics</a>}</>}
 
-      {page==='Learning'&&<><h2>Current Champion</h2><dl>
-        <dt>Profile</dt><dd>{data.champion.profile_id}</dd><dt>Certification</dt><dd>{data.champion.certification_status}</dd>
-        <dt>Market regime</dt><dd>{data.market_regime}</dd><dt>Promotion</dt><dd>MANUAL</dd>
-        <dt>Auto-promotion</dt><dd>DISABLED</dd></dl>
-        <p>{data.challengers.length} active challengers · DO_NOT_TRADE is valid.</p></>}
+      {page==='Learning'&&(data.learning
+        ?<LearningPage learning={data.learning} activity={events}/>
+        :<><h2>Current Champion</h2><dl>
+          <dt>Profile</dt><dd>{data.champion.profile_id}</dd><dt>Certification</dt><dd>{data.champion.certification_status}</dd>
+          <dt>Market regime</dt><dd>{data.market_regime}</dd><dt>Promotion</dt><dd>MANUAL</dd>
+          <dt>Auto-promotion</dt><dd>DISABLED</dd></dl>
+          <p>{data.challengers.length} active challengers · DO_NOT_TRADE is valid.</p></>)}
+
+      {page==='Scanner'&&(data.scanner
+        ?<MarketScannerPage scanner={data.scanner}/>
+        :<article><h2>Market opportunity scanner</h2><p>Scanner evidence unavailable.</p></article>)}
 
       {page==='Telemetry'&&(model
         ?<LiveTelemetryPage model={model} now={now}/>

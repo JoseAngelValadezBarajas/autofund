@@ -1,4 +1,4 @@
-# AutoFund MVP 0.1
+# AutoFund MVP 0.1.1
 
 AutoFund is a bounded local application for BTC/MXN monitoring, session control,
 financial accounting and controlled Production execution. Its normal entry point is:
@@ -18,10 +18,35 @@ authorized capital, 25 MXN maximum deployment and 11 MXN maximum single order.
 STOP and EMERGENCY KILL remain available while running. The browser has no direct
 BUY, SELL, order, cancellation, withdrawal or transfer endpoint.
 
-See [MVP specification](docs/MVP_0_1_SPEC.md), [telemetry](docs/TELEMETRY_SPEC.md),
-[adaptive learning](docs/ADAPTIVE_LEARNING_SPEC.md), and the
-[operations runbook](docs/OPERATIONS_RUNBOOK.md). Lower-level `shadow`, `dashboard`,
-`bitso-prod` and `live` commands remain engineering and certification tools.
+See [MVP specification](docs/MVP_0_1_SPEC.md),
+[0.1.1 learning, postmortem and market discovery](docs/MVP_0_1_1_LEARNING_SPEC.md),
+[telemetry](docs/TELEMETRY_SPEC.md), [adaptive learning](docs/ADAPTIVE_LEARNING_SPEC.md),
+and the [operations runbook](docs/OPERATIONS_RUNBOOK.md). Lower-level `shadow`,
+`dashboard`, `bitso-prod` and `live` commands remain engineering and certification tools.
+
+## What 0.1.1 adds
+
+Sessions now persist `started_at`, `ended_at` and a canonical `stop_reason`, and a
+completed session's elapsed time is frozen. A normally stopped session reports
+runtime **INACTIVE** and retains its last known market quality instead of looking
+STALE or INVALID. Pipeline stages a completed decision path never reached report
+`NOT_APPLICABLE` rather than `UNKNOWN`.
+
+Every strategy evaluation persists the deterministic evidence the Champion
+actually used — features, thresholds, `reason_code` and `distance_to_signal` — and
+feeds it to `AdaptiveEngine` as a `LEARNING_OBSERVATION` at session completion.
+`report.json`, `checkpoint_summary.json` and `handoff.json` are upgraded to
+versioned deterministic postmortem artifacts.
+
+A **read-only Market Opportunity Scanner** discovers the MXN universe dynamically
+from the exchange's available-books response and scores tradability-adjusted
+opportunity (never raw volatility) after hard eligibility filters. It is research
+beside Production: it cannot create an order intent, cannot change the live market
+or the Champion, and cannot halt a valid session.
+
+**The Production market remains BTC/MXN. Multi-market real trading is not
+enabled.** Automatic market rotation and promotion of another market to real-money
+eligibility are DISABLED.
 
 ## Live SHADOW monitoring (F4.6)
 
