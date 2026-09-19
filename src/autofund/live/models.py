@@ -122,3 +122,17 @@ class LiveOrderIntent:
         intent_id = uuid4().hex
         return cls(intent_id, "af-live-" + intent_id, preflight.checked_at,
                    preflight.budget, preflight.public(), fingerprint(preflight.depth))
+
+
+@dataclass(frozen=True)
+class LiveSellIntent:
+    intent_id: str
+    origin_id: str
+    created_at: datetime
+    major_quantity: Decimal
+    market_fingerprint: str
+    book: str = "btc_mxn"
+    side: str = "sell"
+    order_type: str = "market"
+    intent_source: str = "MVP_AUTONOMOUS"
+    status: str = "INTENT_CREATED"

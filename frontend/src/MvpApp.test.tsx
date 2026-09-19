@@ -1,0 +1,14 @@
+import {cleanup,fireEvent,render,screen} from '@testing-library/react';
+import {afterEach,beforeEach,expect,test,vi} from 'vitest';
+import {MvpApp} from './MvpApp';
+
+class Events {addEventListener(){} close(){}}
+const stopped:any={product_version:'AutoFund MVP 0.1',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+ session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
+ risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
+ realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'safe',certification_status:'CERTIFIED'},
+ market_regime:'NORMAL',challengers:[]};
+beforeEach(()=>{vi.stubGlobal('EventSource',Events);vi.stubGlobal('fetch',vi.fn().mockResolvedValue({json:async()=>({control_token:'token'})}))});
+afterEach(()=>{cleanup();vi.unstubAllGlobals()});
+test('strong session authorization and no direct trade controls',()=>{render(<MvpApp initial={stopped}/>);fireEvent.click(screen.getByRole('button',{name:'START AUTOFUND'}));expect(screen.getByText('REAL MONEY SESSION')).toBeTruthy();const authorize=screen.getByRole('button',{name:'AUTHORIZE REAL SESSION'});expect((authorize as HTMLButtonElement).disabled).toBe(true);fireEvent.change(screen.getByLabelText('Strong confirmation'),{target:{value:'START AUTOFUND REAL 50'}});expect((authorize as HTMLButtonElement).disabled).toBe(false);for(const name of ['BUY','SELL','PLACE ORDER','WITHDRAW','TRANSFER'])expect(screen.queryByRole('button',{name})).toBeNull()});
+test('running exposes fast kill and safety labels',()=>{render(<MvpApp initial={{...stopped,app_state:'RUNNING',auto_execution:true}}/>);expect(screen.getByText('AUTO EXECUTION ON')).toBeTruthy();fireEvent.click(screen.getByRole('button',{name:'EMERGENCY KILL'}));expect(screen.getByRole('button',{name:'KILL NOW'})).toBeTruthy();expect(screen.getByText(/does not liquidate/)).toBeTruthy()});

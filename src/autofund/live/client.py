@@ -104,6 +104,23 @@ def validate_buy(body: bytes, single_order_cap: Decimal = Decimal("11")) -> None
         raise LiveError("ONLY_CAPPED_SPOT_MARKET_BUY_ALLOWED") from None
 
 
+def validate_sell(body: bytes) -> None:
+    try:
+        row = parsing.decode(body)
+        if set(row) != {"book", "side", "type", "major", "origin_id", "slippage_tolerance"}:
+            raise ValueError
+        if (row["book"], row["side"], row["type"]) != ("btc_mxn", "sell", "market"):
+            raise ValueError
+        if not ORIGIN.fullmatch(parsing.text(row["origin_id"])):
+            raise ValueError
+        if parsing.number(row["major"]) <= 0:
+            raise ValueError
+        if not Decimal("0") <= parsing.number(row["slippage_tolerance"]) <= Decimal("100"):
+            raise ValueError
+    except Exception:
+        raise LiveError("ONLY_OWNED_SPOT_MARKET_SELL_ALLOWED") from None
+
+
 class LiveTransport(Protocol):
     def request(self, method: str, path: str, body: bytes, authorization: str,
                 permit: _SubmissionPermit | None = None) -> object: ...
@@ -116,7 +133,11 @@ class BitsoProductionLiveTransport:
         if method == "POST":
             if permit is None:
                 raise LiveError("OPERATOR_SUBMISSION_PERMIT_REQUIRED")
-            validate_buy(body)
+            row = parsing.decode(body)
+            if row.get("side") == "buy":
+                validate_buy(body)
+            else:
+                validate_sell(body)
             permit.consume(body)
         elif body:
             raise LiveError("GET_BODY_PROHIBITED")
@@ -197,6 +218,16 @@ class BitsoProductionLiveClient:
         self._known(payload["origin_id"])
         body = json.dumps(payload, separators=(",", ":")).encode()
         validate_buy(body, self.single_order_cap)
+        if permit.used or permit.body != body or payload["origin_id"] in self._submitted_origins:
+            raise LiveError("LIVE_SUBMISSION_ALREADY_ATTEMPTED")
+        self._submitted_origins.add(payload["origin_id"])
+        result = parsing.obj(self._request("POST", "/api/v3/orders", body, permit))
+        return identifier(parsing.text(result.get("oid")))
+
+    def place_market_sell(self, payload: dict[str, str], permit: _SubmissionPermit) -> str:
+        self._known(payload["origin_id"])
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        validate_sell(body)
         if permit.used or permit.body != body or payload["origin_id"] in self._submitted_origins:
             raise LiveError("LIVE_SUBMISSION_ALREADY_ATTEMPTED")
         self._submitted_origins.add(payload["origin_id"])

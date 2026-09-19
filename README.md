@@ -1,4 +1,27 @@
-# AutoFund 0.5 - Production Read-only and Shadow Trading
+# AutoFund MVP 0.1
+
+AutoFund is a bounded local application for BTC/MXN monitoring, session control,
+financial accounting and controlled Production execution. Its normal entry point is:
+
+```powershell
+cd frontend
+npm ci
+npm run build
+cd ..
+autofund app
+```
+
+The application binds `http://127.0.0.1:8000`, opens the default browser once,
+reconciles durable state and remains **STOPPED** until the operator authorizes a
+real-money session in the web control plane. The fixed product envelope is 50 MXN
+authorized capital, 25 MXN maximum deployment and 11 MXN maximum single order.
+STOP and EMERGENCY KILL remain available while running. The browser has no direct
+BUY, SELL, order, cancellation, withdrawal or transfer endpoint.
+
+See [MVP specification](docs/MVP_0_1_SPEC.md), [telemetry](docs/TELEMETRY_SPEC.md),
+[adaptive learning](docs/ADAPTIVE_LEARNING_SPEC.md), and the
+[operations runbook](docs/OPERATIONS_RUNBOOK.md). Lower-level `shadow`, `dashboard`,
+`bitso-prod` and `live` commands remain engineering and certification tools.
 
 ## Live SHADOW monitoring (F4.6)
 

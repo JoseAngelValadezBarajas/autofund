@@ -3,9 +3,11 @@
 import json
 import os
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
+from time import monotonic
 from typing import Any, TextIO
+from uuid import uuid4
 
 from autofund.decimal_utils import financial
 from autofund.exchanges.bitso import parsing
@@ -22,7 +24,7 @@ from autofund.wallet import Wallet
 
 from .client import ORIGIN, BitsoProductionLiveClient, _SubmissionPermit
 from .journal import LiveExecutionJournal
-from .models import LiveConfig, LiveError, LiveOrderIntent, Preflight
+from .models import LiveConfig, LiveError, LiveOrderIntent, LiveSellIntent, Preflight
 from .preflight import preflight
 
 STATES = {"INTENT_CREATED", "PREFLIGHT_PASS", "AWAITING_OPERATOR", "SUBMITTING", "SUBMITTED",
@@ -79,6 +81,19 @@ class LiveExecution:
                 raise LiveError("INVALID_LIVE_INTENT_NAMESPACE")
             if not 0 < parsing.number(data.get("minor_budget")) <= self.config.single_order_cap:
                 raise LiveError("INVALID_LIVE_BUDGET")
+            self.intents[origin] = data
+            self.states[origin] = "INTENT_CREATED"
+            self.client.register_origin(origin)
+        elif kind == "LIVE_SELL_INTENT_CREATED":
+            origin = parsing.text(data.get("origin_id"))
+            quantity = parsing.number(data.get("major_quantity"))
+            position = self.wallet.positions.get("BTC/MXN")
+            if (not ORIGIN.fullmatch(origin) or origin in self.intents or self.unresolved
+                    or not position or quantity <= 0 or quantity > position.quantity):
+                raise LiveError("INVALID_LIVE_SELL_INTENT")
+            if (data.get("book"), data.get("side"), data.get("order_type"), data.get("intent_source")) != (
+                    "btc_mxn", "sell", "market", "MVP_AUTONOMOUS"):
+                raise LiveError("INVALID_LIVE_SELL_INTENT")
             self.intents[origin] = data
             self.states[origin] = "INTENT_CREATED"
             self.client.register_origin(origin)
@@ -153,6 +168,63 @@ class LiveExecution:
         self.state(intent.origin_id, "AWAITING_OPERATOR")
         return intent
 
+    def _check_sell_market(self, quantity: Decimal) -> Any:
+        position = self.wallet.positions.get("BTC/MXN")
+        if not position or quantity <= 0 or quantity > position.quantity:
+            raise LiveError("SELL_EXCEEDS_AUTOFUND_INVENTORY")
+        fees = self.client.fees()
+        limits = self.client.available_books()
+        depth = self.client.order_book()
+        received_monotonic = monotonic()
+        now = datetime.now(UTC)
+        future = (depth.timestamp - now).total_seconds()
+        age = (now - depth.timestamp).total_seconds()
+        value = quantity * depth.best_bid
+        minimum_execution_price = depth.best_bid * (1 - (self.config.slippage_tolerance or Decimal("0")) / 100)
+        bid_quantity = sum((level.amount for level in depth.bids if level.price >= minimum_execution_price), Decimal("0"))
+        if (future > 2 or age > self.config.max_market_age_seconds or depth.spread_bps > self.config.max_spread_bps
+                or Decimal(str(monotonic() - received_monotonic)) > self.config.max_local_snapshot_age_seconds
+                or not limits.minimum_amount <= quantity <= limits.maximum_amount
+                or not limits.minimum_value <= value <= limits.maximum_value
+                or not limits.minimum_price <= minimum_execution_price <= depth.best_bid <= limits.maximum_price
+                or bid_quantity < quantity or fees.taker_fee_decimal < 0):
+            raise LiveError("FINAL_SELL_MARKET_CHECK_REJECTED")
+        if self._last_orderbook_sequence is not None and depth.sequence < self._last_orderbook_sequence:
+            raise LiveError("ORDERBOOK_SEQUENCE_REGRESSION")
+        self._last_orderbook_sequence = depth.sequence
+        return depth
+
+    def create_sell(self, quantity: Decimal) -> LiveSellIntent:
+        if self.unresolved:
+            raise LiveError("RECOVER_UNRESOLVED_LIVE_ORDER_FIRST")
+        depth = self._check_sell_market(quantity)
+        intent_id = uuid4().hex
+        intent = LiveSellIntent(intent_id, "af-live-" + intent_id, datetime.now(UTC), quantity, fingerprint(depth))
+        self.journal.append("LIVE_SELL_INTENT_CREATED", intent)
+        self._restore("LIVE_SELL_INTENT_CREATED", parsing.obj(json.loads(canonical_json(intent))))
+        self.state(intent.origin_id, "PREFLIGHT_PASS")
+        self.state(intent.origin_id, "AWAITING_OPERATOR")
+        return intent
+
+    def submit_sell_authorized(self, intent: LiveSellIntent) -> None:
+        origin = intent.origin_id
+        if origin not in self.intents or self.states.get(origin) != "AWAITING_OPERATOR" or origin in self.submitting:
+            raise LiveError("INTENT_NOT_AWAITING_OPERATOR")
+        self._check_sell_market(intent.major_quantity)
+        payload = {"book": "btc_mxn", "side": "sell", "type": "market", "major": str(intent.major_quantity),
+                   "origin_id": origin, "slippage_tolerance": str(self.config.slippage_tolerance)}
+        self.state(origin, "SUBMITTING")
+        permit = _SubmissionPermit(json.dumps(payload, separators=(",", ":")).encode())
+        try:
+            oid = self.client.place_market_sell(payload, permit)
+        except Exception:
+            self.state(origin, "OUTCOME_UNKNOWN")
+            self.recover(origin)
+            return
+        self.state(origin, "SUBMITTED", oid=oid)
+        self.state(origin, "ACKNOWLEDGED", oid=oid)
+        self.recover(origin)
+
     def confirm_and_submit(self, intent: LiveOrderIntent, *, confirm_real_money: bool,
                            stdin: TextIO, stdout: TextIO) -> None:
         origin = intent.origin_id
@@ -172,6 +244,15 @@ class LiveExecution:
         if stdin.readline().rstrip("\r\n") != "CONFIRM " + origin:
             self.state(origin, "HALTED", reason="OPERATOR_CONFIRMATION_REJECTED")
             raise LiveError("OPERATOR_CONFIRMATION_REJECTED")
+        self.submit_authorized(intent)
+
+    def submit_authorized(self, intent: LiveOrderIntent) -> None:
+        """Submit one BUY after a containing session has already been strongly authorized."""
+        origin = intent.origin_id
+        if origin not in self.intents or self.states.get(origin) != "AWAITING_OPERATOR" or origin in self.submitting:
+            raise LiveError("INTENT_NOT_AWAITING_OPERATOR")
+        if canonical_json(intent) != canonical_json(self.intents[origin]):
+            raise LiveError("INTENT_CHANGED_AFTER_JOURNAL_COMMIT")
         if not self.client.credentials.permissions_confirmed or self.config.slippage_tolerance is None:
             self.state(origin, "HALTED", reason="LIVE_POLICY_MISSING")
             raise LiveError("LIVE_POLICY_MISSING")
@@ -206,7 +287,8 @@ class LiveExecution:
 
     @financial
     def _validate_fill(self, origin: str, fill: ExchangeTradeFill) -> None:
-        if origin not in self.intents or origin not in self.submitting or fill.book != "btc_mxn" or fill.side is not Side.BUY:
+        expected_side = Side(str(self.intents.get(origin, {}).get("side", "buy")).upper())
+        if origin not in self.intents or origin not in self.submitting or fill.book != "btc_mxn" or fill.side is not expected_side:
             raise LiveError("UNRELATED_REAL_FILL_REJECTED")
         if fill.origin_id is not None and fill.origin_id != origin:
             raise LiveError("UNRELATED_REAL_FILL_REJECTED")
@@ -220,11 +302,16 @@ class LiveExecution:
                 raise LiveError("CONTRADICTORY_DUPLICATE_REAL_FILL")
             return
         own = [x for x in self.accounting.processed_fill_ids.values() if x.exchange_order_id == fill.exchange_order_id]
-        gross = sum((x.minor_value for x in own), Decimal("0")) + fill.minor_value
-        if gross > Decimal(str(self.intents[origin]["minor_budget"])):
-            raise LiveError("REAL_FILL_EXCEEDS_INTENT_BUDGET")
+        if expected_side is Side.BUY:
+            gross = sum((x.minor_value for x in own), Decimal("0")) + fill.minor_value
+            if gross > Decimal(str(self.intents[origin]["minor_budget"])):
+                raise LiveError("REAL_FILL_EXCEEDS_INTENT_BUDGET")
+        else:
+            quantity = sum((x.major_quantity for x in own), Decimal("0")) + fill.major_quantity
+            if quantity > Decimal(str(self.intents[origin]["major_quantity"])):
+                raise LiveError("REAL_FILL_EXCEEDS_OWNED_SELL_QUANTITY")
         quote_fees = sum((x.confirmed_fee or Decimal("0") for x in (*own, fill) if x.fee_currency == "mxn"), Decimal("0"))
-        if gross + quote_fees > self.config.single_order_cap:
+        if expected_side is Side.BUY and gross + quote_fees > self.config.single_order_cap:
             raise LiveError("REAL_FILL_EXCEEDS_ALL_IN_CAP")
 
     def recover(self, origin: str | None = None) -> None:
@@ -251,7 +338,8 @@ class LiveExecution:
             except LiveError:
                 pass  # Filled orders may be absent; always query trade evidence.
             for order in orders:
-                if order.origin_id != origin or order.book != "btc_mxn" or order.side is not Side.BUY:
+                expected_side = Side(str(self.intents[origin].get("side", "buy")).upper())
+                if order.origin_id != origin or order.book != "btc_mxn" or order.side is not expected_side:
                     raise LiveError("UNRELATED_ORDER_LOOKUP_REJECTED")
                 self.state(origin, "ACKNOWLEDGED", oid=order.oid)
             try:
@@ -274,8 +362,11 @@ class LiveExecution:
                 self.accounting.apply(fill)
                 self.state(origin, "PARTIALLY_FILLED", oid=fill.exchange_order_id)
             own = [x for x in self.accounting.processed_fill_ids.values() if x.exchange_order_id == self.oids.get(origin)]
-            gross = sum((x.minor_value for x in own), Decimal("0"))
-            complete_budget = gross == Decimal(str(self.intents[origin]["minor_budget"]))
+            expected_side = Side(str(self.intents[origin].get("side", "buy")).upper())
+            if expected_side is Side.BUY:
+                complete_budget = sum((x.minor_value for x in own), Decimal("0")) == Decimal(str(self.intents[origin]["minor_budget"]))
+            else:
+                complete_budget = sum((x.major_quantity for x in own), Decimal("0")) == Decimal(str(self.intents[origin]["major_quantity"]))
             cancelled = any(order.state is OrderState.CANCELLED for order in orders)
             completed_with_fills = bool(own) and any(order.state is OrderState.COMPLETED for order in orders)
             if complete_budget or cancelled or completed_with_fills:

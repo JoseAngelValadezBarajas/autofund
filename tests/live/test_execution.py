@@ -42,6 +42,7 @@ class FakeTransport:
         self.calls: list[str] = []
         self.book_time: datetime | None = None
         self.sequence = 1
+        self.post_oid = "order1"
 
     def request(self, method, path, body, authorization, permit=None):
         self.calls.append(method + " " + path)
@@ -51,7 +52,7 @@ class FakeTransport:
             self.posts += 1
             if self.timeout:
                 raise TimeoutError("fake-secret-MUST-NOT-ESCAPE")
-            return {"oid": "order1"}
+            return {"oid": self.post_oid}
         if path == "/api/v3/balance":
             return {"balances": [{"currency": "mxn", "total": "100000", "locked": "0", "available": "100000"},
                                   {"currency": "btc", "total": "5", "locked": "0", "available": "5"}]}
@@ -77,6 +78,13 @@ def trade(origin: str, tid="trade1", minor="5"):
             "major_currency": "btc", "minor_currency": "mxn", "major": str(D(minor) / D("1000000")),
             "minor": "-" + minor, "price": "1000000", "created_at": datetime.now(UTC).isoformat(),
             "fees_amount": str(-D(minor) * D("0.01")), "fees_currency": "mxn", "maker_side": "sell"}
+
+
+def sell_trade(origin: str, tid="trade-sell", minor="5", major="0.000005"):
+    return {"tid": tid, "oid": "order2", "origin_id": origin, "book": "btc_mxn", "side": "sell",
+            "major_currency": "btc", "minor_currency": "mxn", "major": "-" + major,
+            "minor": minor, "price": str(D(minor) / D(major)), "created_at": datetime.now(UTC).isoformat(),
+            "fees_amount": str(-D(minor) * D("0.01")), "fees_currency": "mxn", "maker_side": "buy"}
 
 
 @pytest.fixture
@@ -122,6 +130,28 @@ def test_success_ledger_dedupe_and_private_balance_isolation(setup):
     assert recovered.wallet.ledger == before
     assert not recovered.unresolved
     recovered.journal.close()
+
+
+def test_session_authorized_buy_then_owned_sell_each_posts_once(setup):
+    engine, fake, _ = setup
+    buy = engine.create(engine.check(D("5")))
+    fake.rows = [trade(buy.origin_id)]
+    engine.submit_authorized(buy)
+    assert fake.posts == 1 and engine.wallet.positions["BTC/MXN"].quantity == D("0.000005")
+    sell = engine.create_sell(D("0.000005"))
+    fake.post_oid = "order2"
+    fake.rows = [sell_trade(sell.origin_id)]
+    engine.submit_sell_authorized(sell)
+    assert fake.posts == 2
+    assert engine.wallet.positions["BTC/MXN"].quantity == 0
+    assert not engine.unresolved
+
+
+def test_sell_cannot_exceed_autofund_owned_inventory(setup):
+    engine, fake, _ = setup
+    with pytest.raises(LiveError, match="SELL_EXCEEDS_AUTOFUND_INVENTORY"):
+        engine.create_sell(D("0.000001"))
+    assert fake.posts == 0
 
 
 @pytest.mark.parametrize("confirmation,interactive,flag", [("", True, True), ("yes", True, True), ("wrong", True, True), ("exact", False, True), ("exact", True, False)])

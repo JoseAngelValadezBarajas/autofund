@@ -17,7 +17,7 @@ test('micro-live reads own runtime only and retains last SSE snapshot on disconn
   vi.stubGlobal('fetch',fetcher);vi.stubGlobal('EventSource',Stream);
   render(<App/>);
   await screen.findByText('AWAITING OPERATOR');
-  expect(fetcher.mock.calls.every(call=>call[0]==='/api/v1/runtime')).toBe(true);
+  expect(fetcher.mock.calls.every(call=>['/api/v1/runtime','/api/v1/health'].includes(call[0]))).toBe(true);
   act(()=>Stream.instance.callback!(new MessageEvent('snapshot',{data:JSON.stringify({runtime:fixture[4]})})));
   await screen.findByText('RECONCILED');
   expect(screen.getByText('0.000005 BTC')).toBeTruthy();

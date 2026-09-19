@@ -4,6 +4,10 @@ import sys
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "app":
+        from autofund.mvp.app import main as app_main
+
+        return app_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "live":
         from autofund.live.cli import main as live_main
 
