@@ -14,6 +14,7 @@ from autofund.decimal_utils import decimal
 from autofund.live.models import LiveError
 
 from .adaptive import AdaptiveEngine
+from .observability import MvpObservability
 from .telemetry import SessionTelemetry
 
 AUTHORIZED_CAPITAL = Decimal("50")
@@ -33,6 +34,8 @@ BLOCKER_GUIDANCE: dict[str, str] = {
                                           "credential environment variables before starting the application.",
     "PRODUCTION_PREFLIGHT_UNAVAILABLE": "The Production preflight could not read the exchange; no trading is possible.",
     "UNRESOLVED_ORDER": "A previous order is unresolved; reconciliation must complete before trading.",
+    "EXECUTION_JOURNAL_IN_USE": "Another AutoFund process owns the live execution journal. Only one "
+                                "instance may trade at a time; close the other instance and retry.",
 }
 
 
@@ -93,9 +96,10 @@ class SafeIdleRunner:
     It owns no exchange transport, so it can never claim Production readiness.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, demo: bool = False) -> None:
         self.running = False
         self.killed = False
+        self.observability = MvpObservability(demo=demo)
         self.preflight_status = PREFLIGHT_NOT_RUN
         self.preflight_blockers: tuple[str, ...] = ("PRODUCTION_PREFLIGHT_NOT_RUN",)
         self.preflight_warnings: tuple[str, ...] = ()
@@ -162,7 +166,14 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             self._block_with(str(exc.args[0]) if exc.args else "LIVE_CREDENTIALS_MISSING_OR_INVALID")
             raise
         client = BitsoProductionLiveClient(credentials, single_order_cap=SINGLE_ORDER_CAP)
-        self.journal = LiveExecutionJournal(self.journal_path)
+        try:
+            self.journal = LiveExecutionJournal(self.journal_path)
+        except Exception:
+            # Another AutoFund process already owns the single-writer journal.
+            # Refusing to proceed is correct; surface why instead of a generic
+            # "startup recovery failed".
+            self._block_with("EXECUTION_JOURNAL_IN_USE")
+            raise
         self.execution = LiveExecution(client, self.journal, LiveConfig(slippage_tolerance=Decimal("0.5")))
         if self.execution.unresolved:
             self.execution.recover()
@@ -237,6 +248,7 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             raise SessionStartBlocked(self.preflight_blockers)
         super().start(config, event)
         self._event = event
+        self.observability.heartbeat(status="RUNNING")
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="autofund-trading-runner", daemon=True)
         self._thread.start()
@@ -244,15 +256,22 @@ class ProductionAutonomousRunner(SafeIdleRunner):
     def stop(self) -> None:
         self.running = False
         self._stop.set()
+        self.observability.end("STOPPED")
 
     def kill(self) -> None:
         self.killed, self.running = True, False
         self._stop.set()
+        self.observability.end("HALTED")
 
     def _loop(self) -> None:
         while self.running and not self._stop.is_set():
+            # Internal runtime liveness, independent of operator publication.
+            self.observability.heartbeat()
             try:
+                started = monotonic()
                 depth = self.execution.client.order_book()
+                # Read-only operator projection of real market data.
+                self.observability.observe_market(depth, latency_ms=(monotonic() - started) * 1000)
                 minute = depth.timestamp.strftime("%Y%m%d%H%M")
                 if self._last_minute is not None and minute != self._last_minute:
                     close = depth.best_bid
@@ -262,6 +281,7 @@ class ProductionAutonomousRunner(SafeIdleRunner):
                     self._evaluate(close)
                 self._last_minute = minute
             except Exception:
+                self.observability.market_unavailable("Market polling unavailable")
                 self._event("MARKET_DISCONNECTED", component="market", level="ERROR", message="Market polling unavailable")
             self._stop.wait(5)
 
@@ -269,19 +289,24 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         if not self.running or self.killed or len(self._closes) < 3:
             self._event("NO_SIGNAL", component="strategy", message="Insufficient closed-candle evidence")
             return
+        started = monotonic()
         self._event("STRATEGY_EVALUATED", component="strategy", message="Certified mean-reversion profile evaluated")
         position = self.execution.wallet.positions.get("BTC/MXN")
         average = sum(self._closes, Decimal("0")) / len(self._closes)
         if position is None or position.quantity == 0:
             if close < average * Decimal("0.999"):
+                self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
                 self.handle_signal("BUY")
             else:
+                self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
                 self._event("NO_SIGNAL", component="strategy", message="Champion chose no trade")
         else:
             average_cost = position.cost_basis_mxn / position.quantity
             if close > average_cost * Decimal("1.002"):
+                self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
                 self.handle_signal("SELL")
             else:
+                self.observability.duration("strategy_evaluation", (monotonic() - started) * 1000)
                 self._event("NO_SIGNAL", component="strategy", message="Champion retained owned position")
 
     def handle_signal(self, side: str) -> None:
@@ -291,7 +316,9 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         self._event("SIGNAL_GENERATED", component="strategy", correlation_id=correlation, message=side)
         try:
             if side == "BUY":
+                checked_at = monotonic()
                 checked = self.execution.check()
+                self.observability.duration("final_market_preflight", (monotonic() - checked_at) * 1000)
                 if not checked.ready:
                     self._event("FINAL_MARKET_CHECK_REJECT", component="execution", correlation_id=correlation,
                                 message=",".join(checked.failures))
@@ -301,7 +328,9 @@ class ProductionAutonomousRunner(SafeIdleRunner):
                 intent = self.execution.create(checked)
                 self._event("FINAL_MARKET_CHECK_PASS", component="execution", correlation_id=correlation, message="Final GET passed")
                 self._event("ORDER_INTENT_CREATED", component="execution", correlation_id=correlation, intent_id=intent.intent_id)
+                reconciled_at = monotonic()
                 self.execution.submit_authorized(intent)
+                self.observability.duration("reconciliation", (monotonic() - reconciled_at) * 1000)
             elif side == "SELL":
                 position = self.execution.wallet.positions.get("BTC/MXN")
                 if position is None or position.quantity <= 0:
@@ -341,7 +370,7 @@ class DemoAutonomousRunner(SafeIdleRunner):
     """Deterministic browser fixture; never imports or calls an exchange client."""
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(demo=True)
         self.step = 0
         self.event: Any = None
 
@@ -352,14 +381,28 @@ class DemoAutonomousRunner(SafeIdleRunner):
                 "exchange": "DEMO", "write_transport": "UNUSED"}
 
     def start(self, config: SessionConfig, event: Any) -> None:
-        self.running, self.killed, self.step, self.event = True, False, 0, event
-        event("MARKET_CONNECTED", component="market", message="Deterministic market connected")
+        super().start(config, event)
+        self.event = event
+        # A new demo session restarts the deterministic fixture, like the real
+        # runner re-runs its preflight, so a restarted session does not replay
+        # the previous session's steps.
+        self.step = 0
+        self.observability.heartbeat(status="RUNNING")
+
+    def _demo_market(self, price: str, *, latency_ms: float = 8.0) -> None:
+        """Deterministic, clearly-marked demo market observation (never Production)."""
+        from autofund.observer.models import Level, OrderBookSnapshot
+        bid = Decimal(price)
+        snapshot = OrderBookSnapshot("btc_mxn", datetime.now(UTC), 1000 + self.step,
+                                     (Level(bid, Decimal("1")),), (Level(bid + Decimal("100"), Decimal("1")),))
+        self.observability.observe_market(snapshot, latency_ms=latency_ms)
 
     def advance(self) -> None:
         if not self.running or self.event is None or self.step >= 2:
             return
         correlation = "demo-trade-1"
         if self.step == 0:
+            self._demo_market("999900")
             for name, component in (("CANDLE_CLOSED", "market"), ("STRATEGY_EVALUATED", "strategy"),
                                     ("SIGNAL_GENERATED", "strategy"), ("CAPITAL_CHECK_PASS", "capital"),
                                     ("RISK_CHECK_PASS", "risk"), ("FINAL_MARKET_CHECK_PASS", "execution"),
@@ -444,14 +487,22 @@ class AutoFundOrchestrator:
                                      blockers=readiness.get("blockers", []), warnings=readiness.get("warnings", []))
             except Exception as exc:
                 self._transition(AppState.HALTED)
-                self.last_error = str(exc.args[0]) if exc.args else "STARTUP_RECOVERY_FAILED"
+                readiness = self.runner.production_preflight()
+                blocker = (readiness.get("blockers") or [None])[0]
+                # Prefer the precise, operator-facing blocker over a raw internal
+                # message when the runner already identified the cause.
+                self.last_error = blocker or (str(exc.args[0]) if exc.args else "STARTUP_RECOVERY_FAILED")
                 self._checkpoint("RECONCILIATION_FAIL", component="orchestrator", level="ERROR", message="Startup recovery failed")
             self.auto_execution = False
 
     def _checkpoint(self, event: str, **fields: Any) -> dict[str, Any]:
         if self.telemetry is None:
             raise LiveError("SESSION_TELEMETRY_UNAVAILABLE")
-        return self.telemetry.checkpoint(event, **fields)
+        row = self.telemetry.checkpoint(event, **fields)
+        # The operator view is a read-only projection of the same authoritative
+        # checkpoint; it can never alter trading behavior.
+        self.runner.observability.observe_checkpoint(row)
+        return row
 
     def start(self, config: SessionConfig, confirmation: str) -> None:
         with self._lock:
@@ -463,6 +514,7 @@ class AutoFundOrchestrator:
             self.session_id = "mvp-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:8]
             self.session_config, self.session_started_at = config, datetime.now(UTC)
             self._session_monotonic = monotonic()
+            self.runner.observability.begin(self.session_id, self.session_started_at)
             self.telemetry = SessionTelemetry(self.artifacts, self.session_id)
             self._checkpoint("SESSION_START_REQUESTED", component="control", message="Operator authorized bounded real session",
                              config={**asdict(config), "authorized_capital_mxn": "50", "max_deployment_mxn": "25", "single_order_cap_mxn": "11"})
@@ -531,6 +583,10 @@ class AutoFundOrchestrator:
             "net_pnl_mxn": snap.get("realized_pnl_mxn", "0"), "fees_mxn": snap.get("fees_mxn", "0")},
             "execution_quality": {}, "halts": 1 if result == "HALTED" else 0})
 
+    def shutdown(self) -> None:
+        """Release the backend publication thread; never changes financial state."""
+        self.runner.observability.close()
+
     def readiness(self) -> dict[str, Any]:
         """Production readiness as shown before START; never invents a preflight."""
         readiness = dict(self.runner.production_preflight())
@@ -541,6 +597,20 @@ class AutoFundOrchestrator:
             readiness["reason"] = ("; ".join(readiness.get("blockers") or [])
                                    or "PRODUCTION_PREFLIGHT_BLOCKED")
         return readiness
+
+    def _session_view(self) -> dict[str, Any]:
+        """Runtime progress for the operator: elapsed, remaining, bounded usage."""
+        with self._lock:
+            if self.session_config is None or self._session_monotonic is None:
+                return {"elapsed_seconds": None, "remaining_seconds": None, "max_duration_seconds": None,
+                        "max_orders_per_session": None, "max_session_loss_mxn": None}
+            elapsed = max(0, int(monotonic() - self._session_monotonic))
+            config = self.session_config
+            return {"elapsed_seconds": elapsed,
+                    "remaining_seconds": max(0, config.max_session_duration_seconds - elapsed),
+                    "max_duration_seconds": config.max_session_duration_seconds,
+                    "max_orders_per_session": config.max_orders_per_session,
+                    "max_session_loss_mxn": str(config.max_session_loss_mxn)}
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -556,14 +626,24 @@ class AutoFundOrchestrator:
                 elif self._session_monotonic is not None and monotonic() - self._session_monotonic >= self.session_config.max_session_duration_seconds:
                     self.stop("maximum session duration reached")
             rows = list(self.telemetry.rows[-100:]) if self.telemetry else []
+            observability = self.runner.observability
             return {"schema_version": "autofund.mvp.v1", "product_version": "AutoFund MVP 0.1",
                     "demo_mode": self.demo, "app_state": self.state, "mode": "REAL MONEY",
                     "auto_execution": self.auto_execution, "session_id": self.session_id,
                     "session_started_at": self.session_started_at, "authorized_capital_mxn": "50",
                     "max_deployment_mxn": "25", "single_order_cap_mxn": "11",
                     "session_config": asdict(self.session_config) if self.session_config else None,
+                    "session": self._session_view(),
                     "kill_triggered": self.kill_triggered, "last_error": self.last_error,
                     "production_preflight": self.readiness(),
+                    # Operator observability, reusing the F4.6 runtime contract.
+                    "runtime": observability.runtime(),
+                    "observability": observability.health(),
+                    "market_state": observability.market_state(),
+                    "pipeline": observability.pipeline(),
+                    "strategy": observability.strategy(),
+                    "candles": observability.candles(),
+                    "metrics": observability.metrics(),
                     "champion": {**asdict(self.adaptive.champion), "fingerprint": self.adaptive.champion.fingerprint},
                     "market_regime": "NORMAL", "auto_promotion": False, "challengers": self.adaptive.challengers,
                     "telemetry": rows, **live}

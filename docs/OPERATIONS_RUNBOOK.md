@@ -4,6 +4,12 @@
 
 Build once with `cd frontend; npm ci; npm run build`, configure dedicated live credentials in environment variables, then run `autofund app`. The app reconciles, runs the GET-only Production preflight itself and remains STOPPED. No separate CLI or preflight command is required before using the web application. In the browser review the 50/25/11 MXN envelope, the **Production preflight READY / BLOCKED** indicator and its exact blocker, then press **START AUTOFUND** and type `START AUTOFUND REAL 50`. START re-runs a fresh GET-only preflight before enabling automatic execution; if it fails, the app stays STOPPED with automatic execution off and shows the precise blocker, and the operator can simply retry.
 
+## Live operator view
+
+While RUNNING, Overview becomes a live operator view: session progress, live market (price, bid, ask, spread, quality, last market event age), a closed-candle chart with the current open candle, strategy evaluation and its reason, the MARKET → … → LEDGER pipeline with each stage's latest result, a live activity tail and operational metrics. **Market**, **Activity** (filterable by component, level and event) and **Telemetry** are live pages. UNKNOWN or WAITING FOR DATA means no data yet; nothing is invented. The open candle is observational only and never a strategy input.
+
+`OBSERVABILITY DEGRADED` means the backend lost both runtime heartbeat and operator publication; it never halts trading and does not depend on whether a browser tab is open.
+
 ## Stop and kill
 
 **STOP SESSION** prevents new intents, finishes known reconciliation, flushes artifacts and returns to STOPPED. **EMERGENCY KILL** immediately blocks new writes, disables strategy execution and enters HALTED; it does not sell an open position. Keep the application alive for inspection and recovery.

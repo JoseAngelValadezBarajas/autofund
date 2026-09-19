@@ -5,6 +5,7 @@ import json
 import secrets
 import zipfile
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -45,7 +46,15 @@ class ActionRequest(BaseModel):
 
 def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
                    *, host: str = "127.0.0.1", port: int = 8000) -> FastAPI:
-    app = FastAPI(title="AutoFund MVP 0.1", version="0.1.0", docs_url=None, redoc_url=None)
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            # Release the backend publication thread; never touches financial state.
+            orchestrator.shutdown()
+
+    app = FastAPI(title="AutoFund MVP 0.1", version="0.1.0", docs_url=None, redoc_url=None, lifespan=lifespan)
     control_token = secrets.token_urlsafe(32)
     allowed_hosts = {host, f"{host}:{port}", "localhost", f"localhost:{port}", "testserver"}
 

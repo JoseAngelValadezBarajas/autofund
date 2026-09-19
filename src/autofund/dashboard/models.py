@@ -237,6 +237,9 @@ class RuntimeMarket(DashboardModel):
     spread_mxn: str
     spread_bps: str
     orderbook_at: datetime
+    # Additive and optional so existing F4.6 producers remain valid.
+    sequence: int | None = None
+    request_latency_ms: int | None = None
 
 
 class RuntimeEvent(DashboardModel):
@@ -254,6 +257,11 @@ class RuntimeEvent(DashboardModel):
     quality: str | None = None
     source_candle_timestamp: datetime | None = None
     ledger_entry_id: int | None = None
+    # Additive MVP operator fields; existing F4.6 producers leave them unset.
+    component: str | None = None
+    level: str | None = None
+    correlation_id: str | None = None
+    checkpoint_id: str | None = None
 
 
 class RuntimeView(DashboardModel):
@@ -262,7 +270,9 @@ class RuntimeView(DashboardModel):
     snapshot_ready: bool = False
     session_id: str | None = None
     status: Literal["STARTING", "RUNNING", "STOPPING", "STOPPED", "DISCONNECTED", "HALTED"] = "STOPPED"
-    mode: Literal["SHADOW", "MICRO-LIVE"] = "SHADOW"
+    # MVP-AUTONOMOUS is the bounded autonomous MVP session; existing F4.6 modes
+    # (SHADOW, MICRO-LIVE) keep their meaning unchanged.
+    mode: Literal["SHADOW", "MICRO-LIVE", "MVP-AUTONOMOUS"] = "SHADOW"
     started_at: datetime | None = None
     elapsed_seconds: int = 0
     last_event_at: datetime | None = None
