@@ -194,7 +194,10 @@ class Dep:
 
 
 class Fee:
-    rate = D("0.0078")
+    def __init__(self, book):
+        self.book = book
+        self.maker_fee_decimal = D("0.0065")
+        self.taker_fee_decimal = D("0.0078")
 
 
 class FakeSource:
@@ -215,9 +218,9 @@ class FakeSource:
         return Dep(book, "18", "18.001", "100") if book == "usd_mxn" \
             else Dep(book, "1000000", "1000010", "0.0002")
 
-    def fee_schedule(self, book):
-        self.calls.append(f"GET fees {book}")
-        return Fee()
+    def fee_schedules(self):
+        self.calls.append("GET fees")
+        return tuple(Fee(book.book) for book in self.available_books())
 
 
 def test_scanner_never_changes_the_live_market_or_champion(tmp_path):

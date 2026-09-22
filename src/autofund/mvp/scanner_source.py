@@ -13,10 +13,7 @@ and rejects everything else before any request leaves the process.
 from decimal import Decimal
 from typing import Any
 
-from autofund.observer.client import (
-    BitsoProductionReadOnlyClient,
-    ProductionCredentials,
-)
+from autofund.observer.client import BitsoProductionReadOnlyClient
 
 from .scanner import ScannerSource
 
@@ -24,8 +21,10 @@ from .scanner import ScannerSource
 class ReadOnlyScannerSource(ScannerSource):
     """Adapter from the F4 read-only client to the scanner's source protocol."""
 
-    def __init__(self, client: BitsoProductionReadOnlyClient | None = None) -> None:
+    def __init__(self, client: BitsoProductionReadOnlyClient | None = None, *,
+                 account_fee_source: Any = None) -> None:
         self._client = client if client is not None else _default_client()
+        self._account_fee_source = account_fee_source
         self.request_count = 0
 
     def available_books(self) -> tuple[Any, ...]:
@@ -40,24 +39,17 @@ class ReadOnlyScannerSource(ScannerSource):
         self.request_count += 1
         return self._client.order_book(book)
 
-    def fee_schedule(self, book: str) -> Any:
+    def fee_schedules(self) -> tuple[Any, ...]:
+        """One authenticated account snapshot shared by every discovered book."""
         self.request_count += 1
-        return self._client.fee_schedule(book)
+        if self._account_fee_source is None:
+            raise RuntimeError("ACCOUNT_FEE_SOURCE_UNAVAILABLE")
+        return tuple(self._account_fee_source())
 
 
 def _default_client() -> BitsoProductionReadOnlyClient:
-    """Public market data needs no credentials; fees do.
-
-    Confirmed Production read-only credentials are used when the operator has
-    provided them, and the client degrades to public-only data otherwise. Absent
-    credentials never grant any additional capability.
-    """
-    credentials = None
-    try:
-        credentials = ProductionCredentials.from_environment()
-    except Exception:
-        credentials = None
-    return BitsoProductionReadOnlyClient(credentials)
+    """Public observations use the strict GET-only transport without credentials."""
+    return BitsoProductionReadOnlyClient()
 
 
 def probe() -> dict[str, Any]:

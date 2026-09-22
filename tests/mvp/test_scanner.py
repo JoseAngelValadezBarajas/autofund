@@ -59,8 +59,10 @@ class Depth:
 
 
 class Fee:
-    def __init__(self, rate: str = "0.0078") -> None:
-        self.rate = D(rate)
+    def __init__(self, book: str, rate: str = "0.0078") -> None:
+        self.book = book
+        self.maker_fee_decimal = D("0.0065")
+        self.taker_fee_decimal = D(rate)
 
 
 class Source:
@@ -83,11 +85,11 @@ class Source:
         self.calls.append(f"GET /order_book {book}")
         return self.depths[book]
 
-    def fee_schedule(self, book):
-        self.calls.append(f"GET /fees {book}")
+    def fee_schedules(self):
+        self.calls.append("GET /fees")
         if not self.fees:
             raise RuntimeError("fee data unavailable")
-        return Fee()
+        return tuple(Fee(book.book) for book in self.books)
 
 
 def source(*, usd_amount: str = "100", usd_bid: str = "18", usd_ask: str = "18.001",
@@ -173,6 +175,37 @@ def test_missing_fee_data_is_a_safe_rejection():
     btc = by_book(evidence, "btc_mxn")
     assert btc["status"] == sc.MISSING_FEE_DATA
     assert btc["cap_executable"] is False
+    assert btc["best_bid_mxn"] == "1000000"
+    assert btc["best_ask_mxn"] == "1000010"
+    assert btc["movement_bps"] is not None and btc["depth_mxn"] is not None
+    assert btc["maker_fee"] is None and btc["taker_fee"] is None
+    assert evidence["fee_source"] == "UNAVAILABLE"
+    assert evidence["status"] == "DEGRADED"
+    assert evidence["error"] == "ACCOUNT_FEE_SOURCE_UNAVAILABLE"
+
+
+def test_missing_one_book_fee_rejects_only_that_market():
+    src = source()
+    src.fee_schedules = lambda: (Fee("btc_mxn", "0.0078"), Fee("usd_mxn", "0.002"))
+    evidence = scan(src)
+    assert by_book(evidence, "btc_mxn")["status"] == ELIGIBLE
+    assert by_book(evidence, "usd_mxn")["taker_fee"] == "0.002"
+    sol = by_book(evidence, "sol_mxn")
+    assert sol["status"] == sc.MISSING_FEE_DATA and sol["best_bid_mxn"] == "3000"
+    assert evidence["books_with_account_fee"] == 2
+    assert evidence["books_with_market_data"] == 3
+    assert evidence["status"] == "DEGRADED"
+    assert evidence["error"] == "ACCOUNT_FEE_DATA_INCOMPLETE"
+
+
+def test_account_fee_snapshot_is_cached_once_for_all_books():
+    src = source()
+    scanner = sc.MarketScanner(src, interval_seconds=300)
+    first = scanner.scan(now=NOW)
+    second = scanner.scan(now=NOW)
+    assert src.calls.count("GET /fees") == 1
+    assert [row["data_fingerprint"] for row in first["candidates"]] == \
+        [row["data_fingerprint"] for row in second["candidates"]]
 
 
 def test_scanner_uses_only_get_and_never_posts():

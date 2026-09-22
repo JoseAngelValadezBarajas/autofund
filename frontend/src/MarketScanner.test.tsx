@@ -11,7 +11,7 @@ const candidate=(over:any={})=>({
     spread_cost_score:'0.99',fee_cost_score:'0.64',slippage_score:'0.99',data_quality_score:'1'},
   movement_bps:'200',volatility_bps:'200',high_low_range_bps:'200',best_bid_mxn:'1000000',
   best_ask_mxn:'1000010',spread_bps:'0.1',depth_mxn:'200',volume_mxn:'500',minimum_order_mxn:'10',
-  taker_fee:'0.0078',estimated_round_trip_friction_mxn:'0.1716',
+  maker_fee:'0.0065',taker_fee:'0.0078',estimated_round_trip_friction_mxn:'0.1716',
   estimated_round_trip_friction_bps:'156',data_quality:'VALID',cap_executable:true,
   strategy_compatibility:'CERTIFIED_FOR_MARKET',lifecycle:'SHADOW_CANDIDATE',shadow_evaluations:0,
   shadow_signals:0,shadow_net_pnl_mxn:null,evidence_count:0,
@@ -29,7 +29,9 @@ const scanner=(over:Partial<ScannerEvidence>={}):ScannerEvidence=>({
   shadow:[{market:'btc_mxn',candles:0,evaluations:0,signals:0,signal_rate:'0',net_pnl_mxn:'0',
     strategy_compatibility:'CERTIFIED_FOR_MARKET',evidence_count:0,lifecycle:'RESEARCH_ONLY'}],
   live_market:'btc_mxn',production_market_rotation:'DISABLED',market_promotion:'DISABLED',
-  read_only:true,execution_path_to_production:'NOT_PRESENT',interval_seconds:300,...over});
+  read_only:true,execution_path_to_production:'NOT_PRESENT',interval_seconds:300,status:'HEALTHY',
+  fee_source:'ACCOUNT CONFIRMED',last_fee_refresh_at:'2026-09-19T12:00:00Z',
+  books_with_account_fee:2,books_with_market_data:2,...over});
 
 const learning=(over:Partial<LearningView>={}):LearningView=>({
   champion:{profile_id:'mean-reversion-safe',strategy_id:'mean_reversion',version:'0.1',
@@ -63,6 +65,8 @@ test('scanner page reports eligible, rejected and universe counts',()=>{
   expect(screen.getByText('Eligible')).toBeTruthy();
   expect(screen.getByText('Rejected')).toBeTruthy();
   expect(screen.getByText('autofund.market-opportunity.v1')).toBeTruthy();
+  expect(screen.getByText('ACCOUNT CONFIRMED')).toBeTruthy();
+  expect(screen.getByText('HEALTHY')).toBeTruthy();
 });
 
 test('scanner page shows research labels and isolation, never trade advice',()=>{

@@ -61,7 +61,10 @@ class _Depth:
 
 
 class _Fee:
-    rate = Decimal("0.0078")
+    def __init__(self, book):
+        self.book = book
+        self.maker_fee_decimal = Decimal("0.0065")
+        self.taker_fee_decimal = Decimal("0.0078")
 
 
 class FixtureScannerSource:
@@ -91,9 +94,9 @@ class FixtureScannerSource:
                 "sol_mxn": ("3000", "3001", "0.01")}
         return _Depth(book, *rows[book], 1, self.now)
 
-    def fee_schedule(self, book):
+    def fee_schedules(self):
         self.calls.append("GET")
-        return _Fee()
+        return tuple(_Fee(book) for book in ("btc_mxn", "usd_mxn", "eth_mxn", "sol_mxn"))
 
 
 def seed(orchestrator: AutoFundOrchestrator) -> None:

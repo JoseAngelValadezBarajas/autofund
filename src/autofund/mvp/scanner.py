@@ -64,7 +64,7 @@ class ScannerSource(Protocol):
     def available_books(self) -> tuple[Any, ...]: ...
     def ticker(self, book: str) -> Any: ...
     def order_book(self, book: str) -> Any: ...
-    def fee_schedule(self, book: str) -> Any: ...
+    def fee_schedules(self) -> tuple[Any, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +85,7 @@ class MarketCandidate:
     depth_mxn: str | None
     volume_mxn: str | None
     minimum_order_mxn: str | None
+    maker_fee: str | None
     taker_fee: str | None
     estimated_round_trip_friction_mxn: str | None
     estimated_round_trip_friction_bps: str | None
@@ -130,6 +131,10 @@ class MarketScanner:
         self.scanned_at: datetime | None = None
         self.degraded = False
         self.last_error: str | None = None
+        self.fee_source = "UNAVAILABLE"
+        self.last_fee_refresh_at: datetime | None = None
+        self._fee_cache: dict[str, Any] = {}
+        self._fee_cache_at: datetime | None = None
         self.shadow: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
 
@@ -141,19 +146,14 @@ class MarketScanner:
                             if str(book.book).endswith("_mxn")))
 
     @financial
-    def _evaluate_market(self, book: str, limits: Any, now: datetime) -> MarketCandidate:
+    def _evaluate_market(self, book: str, limits: Any, now: datetime,
+                         fee_map: dict[str, Any]) -> MarketCandidate:
         """Collect GET-only observations and apply the hard eligibility filters."""
         try:
             ticker = self._source.ticker(book)          # type: ignore[union-attr]
             depth = self._source.order_book(book)       # type: ignore[union-attr]
         except Exception:
             return self._rejected(book, INVALID_DATA, "Market read unavailable", limits)
-
-        try:
-            fee = self._source.fee_schedule(book)       # type: ignore[union-attr]
-            taker = fee.rate
-        except Exception:
-            return self._rejected(book, MISSING_FEE_DATA, "Account fee data unavailable", limits)
 
         age = Decimal(str(max(ZERO, Decimal(str((now - depth.timestamp).total_seconds())))))
         if age > MAX_DATA_AGE_SECONDS:
@@ -166,38 +166,46 @@ class MarketScanner:
         movement = movement_bps(ticker.high, ticker.low)
         spread_bps = depth.spread_bps
         minimum_value = limits.minimum_value
+        fee = fee_map.get(book)
+        maker = fee.maker_fee_decimal if fee is not None else None
+        taker = fee.taker_fee_decimal if fee is not None else None
         score = score_market(movement_bps=movement, volatility_bps=movement,
                              spread_bps=spread_bps, depth_mxn=total_depth, volume_mxn=volume_mxn,
                              taker_rate=taker, quality="VALID", staleness_seconds=age,
                              notional_mxn=self.cap_mxn)
 
+        if fee is None:
+            return self._candidate(book, MISSING_FEE_DATA, "Account fee data unavailable",
+                                   limits, ticker, depth, maker, taker, total_depth, volume_mxn,
+                                   movement, spread_bps, score, age)
+
         # Hard filters run before ranking. Order is deliberate and documented.
         if minimum_value > self.cap_mxn:
             return self._candidate(book, INELIGIBLE_CAP,
                                    f"Minimum order {minimum_value} exceeds the {self.cap_mxn} MXN single-order cap",
-                                   limits, ticker, depth, taker, total_depth, volume_mxn, movement,
+                                   limits, ticker, depth, maker, taker, total_depth, volume_mxn, movement,
                                    spread_bps, score, age)
         if minimum_value <= ZERO:
             return self._rejected(book, INELIGIBLE_MINIMUM, "Invalid exchange minimum", limits)
         if spread_bps > MAX_ELIGIBLE_SPREAD_BPS:
             return self._candidate(book, INELIGIBLE_SPREAD,
                                    f"Spread {spread_bps} bps exceeds the {MAX_ELIGIBLE_SPREAD_BPS} bps policy",
-                                   limits, ticker, depth, taker, total_depth, volume_mxn, movement,
+                                   limits, ticker, depth, maker, taker, total_depth, volume_mxn, movement,
                                    spread_bps, score, age)
         if total_depth < MIN_REQUIRED_DEPTH_MXN:
             return self._candidate(book, INELIGIBLE_DEPTH,
                                    f"Top-of-book depth {total_depth} MXN below the {MIN_REQUIRED_DEPTH_MXN} MXN floor",
-                                   limits, ticker, depth, taker, total_depth, volume_mxn, movement,
+                                   limits, ticker, depth, maker, taker, total_depth, volume_mxn, movement,
                                    spread_bps, score, age)
         return self._candidate(book, ELIGIBLE, "Tradable within the current 50/25/11 MXN envelope",
-                               limits, ticker, depth, taker, total_depth, volume_mxn, movement,
+                               limits, ticker, depth, maker, taker, total_depth, volume_mxn, movement,
                                spread_bps, score, age)
 
     def _base(self, book: str) -> dict[str, Any]:
         return {"book": book, "rank": 0, "movement_bps": None, "volatility_bps": None,
                 "high_low_range_bps": None, "best_bid_mxn": None, "best_ask_mxn": None,
                 "spread_bps": None, "depth_mxn": None, "volume_mxn": None,
-                "minimum_order_mxn": None, "taker_fee": None,
+                "minimum_order_mxn": None, "maker_fee": None, "taker_fee": None,
                 "estimated_round_trip_friction_mxn": None, "estimated_round_trip_friction_bps": None,
                 "data_quality": "INVALID", "cap_executable": False,
                 "score": "0", "score_version": SCORE_VERSION, "components": {},
@@ -212,7 +220,7 @@ class MarketScanner:
         return MarketCandidate(status=status, reason=reason, **base)
 
     def _candidate(self, book: str, status: str, reason: str, limits: Any, ticker: Any, depth: Any,
-                   taker: Decimal, total_depth: Decimal, volume_mxn: Decimal,
+                   maker: Decimal | None, taker: Decimal | None, total_depth: Decimal, volume_mxn: Decimal,
                    movement: Decimal | None, spread_bps: Decimal, score: Any, age: Decimal) -> MarketCandidate:
         base = self._base(book)
         base.update({
@@ -222,18 +230,33 @@ class MarketScanner:
             "best_bid_mxn": str(ticker.bid), "best_ask_mxn": str(ticker.ask),
             "spread_bps": str(spread_bps), "depth_mxn": str(total_depth),
             "volume_mxn": str(volume_mxn), "minimum_order_mxn": str(limits.minimum_value),
-            "taker_fee": str(taker),
-            "estimated_round_trip_friction_mxn": str(score.friction.round_trip_mxn),
-            "estimated_round_trip_friction_bps": str(score.friction.round_trip_bps),
-            "data_quality": "VALID", "cap_executable": limits.minimum_value <= self.cap_mxn,
+            "maker_fee": None if maker is None else str(maker),
+            "taker_fee": None if taker is None else str(taker),
+            "estimated_round_trip_friction_mxn": (None if taker is None else str(score.friction.round_trip_mxn)),
+            "estimated_round_trip_friction_bps": (None if taker is None else str(score.friction.round_trip_bps)),
+            "data_quality": "VALID",
+            "cap_executable": taker is not None and limits.minimum_value <= self.cap_mxn,
             "score": str(score.score), "components": dict(score.components),
         })
         base["lifecycle"] = "SHADOW_CANDIDATE" if status == ELIGIBLE else "REJECTED"
         base["data_fingerprint"] = fingerprint({
             "book": book, "bid": str(ticker.bid), "ask": str(ticker.ask),
             "sequence": depth.sequence, "score_version": SCORE_VERSION, "score": str(score.score),
-            "minimum_value": str(limits.minimum_value), "taker": str(taker)})
+            "minimum_value": str(limits.minimum_value), "maker": None if maker is None else str(maker),
+            "taker": None if taker is None else str(taker)})
         return MarketCandidate(status=status, reason=reason, **base)
+
+    def _account_fees(self, now: datetime) -> dict[str, Any]:
+        """Refresh one account fee snapshot per scanner cadence, never per book."""
+        if (self._fee_cache_at is not None
+                and (now - self._fee_cache_at).total_seconds() < self.interval_seconds):
+            return dict(self._fee_cache)
+        assert self._source is not None
+        schedules = self._source.fee_schedules()
+        mapped = {str(row.book): row for row in schedules}
+        self._fee_cache, self._fee_cache_at = mapped, now
+        self.last_fee_refresh_at = now
+        return dict(mapped)
 
     # ------------------------------------------------------------------ scan
     def scan(self, *, now: datetime | None = None, telemetry: Any = None) -> dict[str, Any]:
@@ -243,10 +266,16 @@ class MarketScanner:
             emit = (lambda *args, **kwargs: None) if telemetry is None else telemetry
             emit("MARKET_SCAN_STARTED", component="scanner", message="MXN universe discovery started")
             try:
-                books = self.discover()
-                limits = {str(book.book): book for book in self._source.available_books()}  # type: ignore[union-attr]
+                available = self._source.available_books()  # type: ignore[union-attr]
+                books = tuple(sorted(str(row.book) for row in available if str(row.book).endswith("_mxn")))
+                limits = {str(book.book): book for book in available}
                 self.universe_size = len(books)
-                candidates = [self._evaluate_market(book, limits[book], now) for book in books]
+                fee_error = False
+                try:
+                    fee_map = self._account_fees(now)
+                except Exception:
+                    fee_map, fee_error = {}, True
+                candidates = [self._evaluate_market(book, limits[book], now, fee_map) for book in books]
             except Exception as exc:
                 # Scanner failure is contained: research never halts Production.
                 self.degraded = True
@@ -254,8 +283,11 @@ class MarketScanner:
                 emit("MARKET_SCANNER_DEGRADED", component="scanner", level="WARNING",
                      message=self.last_error)
                 return self.evidence()
-            self.degraded = False
-            self.last_error = None
+            missing_fees = any(book not in fee_map for book in books)
+            self.degraded = fee_error or missing_fees
+            self.last_error = ("ACCOUNT_FEE_SOURCE_UNAVAILABLE" if fee_error else
+                               "ACCOUNT_FEE_DATA_INCOMPLETE" if missing_fees else None)
+            self.fee_source = "UNAVAILABLE" if fee_error else "ACCOUNT CONFIRMED"
             # Deterministic ranking: score desc, then book name asc for stability.
             ranked = sorted(candidates, key=lambda item: (-Decimal(item.score), item.book))
             ordered: list[MarketCandidate] = []
@@ -326,6 +358,12 @@ class MarketScanner:
         with self._lock:
             return {"scanner_ran": self.scanned_at is not None, "degraded": self.degraded,
                     "error": self.last_error, "universe_size": self.universe_size,
+                    "status": "DEGRADED" if self.degraded else "HEALTHY",
+                    "fee_source": self.fee_source,
+                    "last_fee_refresh_at": (self.last_fee_refresh_at.isoformat().replace("+00:00", "Z")
+                                            if self.last_fee_refresh_at else None),
+                    "books_with_account_fee": sum(1 for item in self.candidates if item.taker_fee is not None),
+                    "books_with_market_data": sum(1 for item in self.candidates if item.best_bid_mxn is not None),
                     "scanned_at": self.scanned_at.isoformat().replace("+00:00", "Z") if self.scanned_at else None,
                     "score_version": SCORE_VERSION,
                     "eligible": [item.public() for item in self.candidates if item.status == ELIGIBLE],

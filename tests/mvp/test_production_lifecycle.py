@@ -4,13 +4,16 @@ Offline only: the F5 transport is replaced by the certified fake used by the liv
 suite. Nothing here may reach Bitso and no order POST is permitted.
 """
 
+from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from live.test_execution import FakeTransport
 
 from autofund.mvp.api import create_mvp_app
+from autofund.mvp.app import production_scanner_source
 from autofund.mvp.orchestrator import (
     AppState,
     AutoFundOrchestrator,
@@ -19,6 +22,7 @@ from autofund.mvp.orchestrator import (
     SessionConfig,
     SessionStartBlocked,
 )
+from autofund.mvp.scanner import MarketScanner
 
 D = Decimal
 CONFIRMATION = "START AUTOFUND REAL 50"
@@ -149,3 +153,56 @@ def test_missing_production_credentials_block_without_any_exchange_write(tmp_pat
         app.start(SessionConfig(), CONFIRMATION)
     assert app.state is AppState.HALTED and app.auto_execution is False
     assert calls == []
+
+
+def test_real_app_scanner_wiring_reuses_initialized_production_fee_client(production):
+    app, runner, transport = production
+    original_request = transport.request
+
+    def multi_book_request(method, path, body, authorization, permit=None):
+        if path == "/api/v3/fees":
+            transport.calls.append(method + " " + path)
+            return {"fees": [
+                {"book": "btc_mxn", "maker_fee_decimal": "0.0050",
+                 "taker_fee_decimal": "0.0100", "current_volume": "0"},
+                {"book": "eth_mxn", "maker_fee_decimal": "0.0065",
+                 "taker_fee_decimal": "0.0078", "current_volume": "0"},
+            ]}
+        if path == "/api/v3/available_books":
+            rows = original_request(method, path, body, authorization, permit)
+            return [*rows, {**rows[0], "book": "eth_mxn"}]
+        return original_request(method, path, body, authorization, permit)
+
+    transport.request = multi_book_request
+    app.startup()
+
+    class PublicMarketClient:
+        def available_books(self):
+            from autofund.exchanges.bitso import parsing
+            payload = transport.request("GET", "/api/v3/available_books", b"", "")
+            return parsing.books(payload)
+
+        def ticker(self, book):
+            return SimpleNamespace(book=book, bid=D("1000000"), ask=D("1000010"),
+                                   high=D("1010000"), low=D("990000"),
+                                   volume=D("100"), vwap=D("100"))
+
+        def order_book(self, book):
+            level = SimpleNamespace(price=D("1000000"), amount=D("0.0002"))
+            ask = SimpleNamespace(price=D("1000010"), amount=D("0.0002"))
+            return SimpleNamespace(book=book, timestamp=datetime(2026, 9, 19, 12, tzinfo=UTC),
+                                   sequence=1, bids=(level,), asks=(ask,), spread_bps=D("0.1"))
+
+    source = production_scanner_source(runner, PublicMarketClient())
+    before_posts = transport.posts
+    evidence = MarketScanner(source).scan(now=datetime(2026, 9, 19, 12, tzinfo=UTC))
+    assert evidence["fee_source"] == "ACCOUNT CONFIRMED"
+    assert evidence["books_with_account_fee"] == 2
+    by_book = {row["book"]: row for row in evidence["candidates"]}
+    assert by_book["btc_mxn"]["maker_fee"] == "0.0050"
+    assert by_book["btc_mxn"]["taker_fee"] == "0.0100"
+    assert by_book["eth_mxn"]["maker_fee"] == "0.0065"
+    assert by_book["eth_mxn"]["taker_fee"] == "0.0078"
+    # One startup/preflight fee GET plus one scanner snapshot, never one per book.
+    assert transport.calls.count("GET /api/v3/fees") == 2
+    assert transport.posts == before_posts == 0

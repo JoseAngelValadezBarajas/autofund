@@ -182,8 +182,16 @@ class BitsoProductionLiveClient:
     def balances(self) -> tuple[ExchangeBalance, ...]:
         return parsing.balances(self._request("GET", "/api/v3/balance"))
 
+    def fee_schedules(self) -> tuple[FeeSchedule, ...]:
+        """Return the authenticated account fee snapshot for every book.
+
+        Parsing and decimal normalization stay shared with execution/preflight;
+        research callers receive the same immutable FeeSchedule model.
+        """
+        return parsing.fees(self._request("GET", "/api/v3/fees"))
+
     def fees(self) -> FeeSchedule:
-        matches = [x for x in parsing.fees(self._request("GET", "/api/v3/fees")) if x.book == "btc_mxn"]
+        matches = [x for x in self.fee_schedules() if x.book == "btc_mxn"]
         if len(matches) != 1:
             raise LiveError("CONFIRMED_ACCOUNT_FEES_UNAVAILABLE")
         return matches[0]

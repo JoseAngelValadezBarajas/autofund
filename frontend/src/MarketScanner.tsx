@@ -6,7 +6,7 @@ export interface ScannerCandidate {
   components:Record<string,string>; movement_bps:string|null; volatility_bps:string|null;
   high_low_range_bps:string|null; best_bid_mxn:string|null; best_ask_mxn:string|null;
   spread_bps:string|null; depth_mxn:string|null; volume_mxn:string|null; minimum_order_mxn:string|null;
-  taker_fee:string|null; estimated_round_trip_friction_mxn:string|null;
+  maker_fee:string|null; taker_fee:string|null; estimated_round_trip_friction_mxn:string|null;
   estimated_round_trip_friction_bps:string|null; data_quality:string; cap_executable:boolean;
   strategy_compatibility:string; lifecycle:string; shadow_evaluations:number; shadow_signals:number;
   shadow_net_pnl_mxn:string|null; evidence_count:number; data_fingerprint:string;
@@ -16,7 +16,8 @@ export interface ScannerEvidence {
   score_version?:string; eligible:ScannerCandidate[]; rejected:ScannerCandidate[];
   candidates:ScannerCandidate[]; shadow:any[]; live_market:string; production_market_rotation:string;
   market_promotion:string; read_only:boolean; execution_path_to_production:string;
-  interval_seconds?:number;
+  interval_seconds?:number; status?:string; fee_source?:string; last_fee_refresh_at?:string|null;
+  books_with_account_fee?:number; books_with_market_data?:number;
 }
 export interface LearningView {
   champion:{profile_id:string;strategy_id:string;version:string;fingerprint:string;certification_status:string};
@@ -63,11 +64,16 @@ export function MarketScannerPage({scanner}:{scanner:ScannerEvidence}){
         order. Execution path to Production: {scanner.execution_path_to_production}.</p>
       {scanner.degraded&&<p className="error">MARKET_SCANNER_DEGRADED{scanner.error?`: ${scanner.error}`:''} —
         Production is unaffected.</p>}
+      <p>Fee source: <strong>{scanner.fee_source??'UNAVAILABLE'}</strong> · Scanner status:{' '}
+        <strong>{scanner.status??(scanner.degraded?'DEGRADED':'HEALTHY')}</strong> · Last successful fee refresh:{' '}
+        <span data-volatile="true">{scanner.last_fee_refresh_at??'NEVER'}</span></p>
     </div>
     <div className="cards">
       {[['MXN books discovered',String(scanner.universe_size)],
         ['Eligible',String(scanner.eligible.length)],
         ['Rejected',String(scanner.rejected.length)],
+        ['Books with account fee',String(scanner.books_with_account_fee??0)],
+        ['Books with market data',String(scanner.books_with_market_data??0)],
         ['Score version',scanner.score_version??'UNKNOWN']].map(([label,value])=>
         <article key={label}><small>{label}</small><b>{value}</b></article>)}
     </div>
@@ -75,7 +81,7 @@ export function MarketScannerPage({scanner}:{scanner:ScannerEvidence}){
     <div className="table"><table><thead><tr>
       <th>Rank</th><th>Book</th><th>Status</th><th>Score</th><th>Movement bps</th><th>Volatility bps</th>
       <th>Bid</th><th>Ask</th><th>Spread bps</th><th>Depth MXN</th><th>Min order MXN</th>
-      <th>Taker fee</th><th>Round-trip friction</th><th>Data</th><th>Cap executable</th>
+      <th>Maker fee</th><th>Taker fee</th><th>Round-trip friction</th><th>Data</th><th>Cap executable</th>
       <th>Strategy</th><th>Reason</th></tr></thead>
       <tbody>{scanner.candidates.map(c=><tr key={c.book} data-book={c.book}>
         <td>{c.rank>0?c.rank:'—'}</td><td>{c.book}</td><td><Status candidate={c}/></td>
@@ -83,7 +89,7 @@ export function MarketScannerPage({scanner}:{scanner:ScannerEvidence}){
         <td>{c.volatility_bps?num(c.volatility_bps):'UNKNOWN'}</td>
         <td>{c.best_bid_mxn??'UNKNOWN'}</td><td>{c.best_ask_mxn??'UNKNOWN'}</td>
         <td>{c.spread_bps?num(c.spread_bps,3):'UNKNOWN'}</td><td>{c.depth_mxn?num(c.depth_mxn):'UNKNOWN'}</td>
-        <td>{c.minimum_order_mxn??'UNKNOWN'}</td><td>{c.taker_fee??'UNKNOWN'}</td>
+        <td>{c.minimum_order_mxn??'UNKNOWN'}</td><td>{c.maker_fee??'UNKNOWN'}</td><td>{c.taker_fee??'UNKNOWN'}</td>
         <td>{c.estimated_round_trip_friction_mxn?`${num(c.estimated_round_trip_friction_mxn,4)} MXN`:'UNKNOWN'}</td>
         <td>{c.data_quality}</td><td>{c.cap_executable?'YES':'NO'}</td>
         <td>{c.strategy_compatibility==='CERTIFIED_FOR_MARKET'?'CERTIFIED':'RESEARCH ONLY'}</td>

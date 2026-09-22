@@ -242,6 +242,12 @@ class ProductionAutonomousRunner(SafeIdleRunner):
                 "production_get_count": sum(1 for method in methods if method == "GET"),
                 "production_post_count": sum(1 for method in methods if method == "POST")}
 
+    def account_fee_schedules(self) -> tuple[Any, ...]:
+        """Authenticated fee snapshot from the same client used by F5 preflight."""
+        if self.execution is None:
+            raise LiveError("ACCOUNT_FEE_SOURCE_UNAVAILABLE")
+        return tuple(self.execution.client.fee_schedules())
+
     def _preflight_event(self, event: Any, passed: bool) -> None:
         if event is None:
             return

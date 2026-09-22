@@ -62,7 +62,10 @@ class _Depth:
 
 
 class _Fee:
-    rate = Decimal("0.0078")
+    def __init__(self, book: str) -> None:
+        self.book = book
+        self.maker_fee_decimal = Decimal("0.0065")
+        self.taker_fee_decimal = Decimal("0.0078")
 
 
 class DemoScannerSource:
@@ -84,5 +87,5 @@ class DemoScannerSource:
         bid, ask, _, _, amount = DEMO_MARKETS[book]
         return _Depth(book, bid, ask, amount, self._stamp())
 
-    def fee_schedule(self, book: str) -> _Fee:
-        return _Fee()
+    def fee_schedules(self) -> tuple[_Fee, ...]:
+        return tuple(_Fee(book) for book, _minimum in DEMO_BOOKS)
