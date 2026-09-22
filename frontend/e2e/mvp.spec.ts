@@ -66,6 +66,16 @@ test('MVP autonomous BUY SELL and graceful STOP',async({page},testInfo)=>{
   await expect(page.getByRole('columnheader',{name:'Correlation'})).toBeVisible();
   await shot(page,'mvp-running-activity-desktop.png',testInfo);
 
+  // Wallet is account evidence only and remains visibly separate from the
+  // AutoFund-owned portfolio. It never exposes exchange mutation controls.
+  await page.getByRole('button',{name:'Wallet',exact:true}).click();
+  await expect(page.getByText('BITSO WALLET — READ ONLY',{exact:true})).toBeVisible();
+  await expect(page.getByText('AUTOFUND OWNED',{exact:true})).toBeVisible();
+  await expect(page.getByText(/may contain funds that do not belong/)).toBeVisible();
+  for(const name of ['BUY','SELL','SEND','WITHDRAW','TRANSFER'])
+    await expect(page.getByRole('button',{name})).toHaveCount(0);
+  await shot(page,'mvp-running-wallet-desktop.png',testInfo);
+
   // Telemetry page.
   await page.getByRole('button',{name:'Telemetry',exact:true}).click();
   await expect(page.getByText('Observability',{exact:true})).toBeVisible();

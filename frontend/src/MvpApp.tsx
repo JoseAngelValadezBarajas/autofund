@@ -2,9 +2,9 @@ import {useEffect,useState} from 'react';
 import {LiveActivityPage,LiveMarketPage,LiveOperatorView,LiveTelemetryPage,type MvpObservability,useTicker} from './LiveOperator';
 import {LearningPage,MarketScannerPage,type LearningView,type ScannerEvidence} from './MarketScanner';
 
-type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];session?:MvpObservability['session']&{started_at?:string|null;ended_at?:string|null;actual_runtime_seconds?:number|null;stop_reason?:string|null;frozen?:boolean};learning?:LearningView;scanner?:ScannerEvidence};
+type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];wallet?:{status:string;error?:string|null;read_only:boolean;balances:{currency:string;total:string;available:string;locked:string;approx_mxn:string|null}[]};execution?:any;production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];session?:MvpObservability['session']&{started_at?:string|null;ended_at?:string|null;actual_runtime_seconds?:number|null;stop_reason?:string|null;frozen?:boolean};learning?:LearningView;scanner?:ScannerEvidence};
 
-const pages=['Overview','Market','Activity','Positions','Ledger','Sessions','Learning','Telemetry','System','Scanner'];
+const pages=['Overview','Market','Activity','Wallet','Positions','Ledger','Sessions','Learning','Telemetry','System','Scanner'];
 
 /** True when the backend published a real live observability model. */
 function live(data:Snapshot):MvpObservability|null{
@@ -79,6 +79,26 @@ export function MvpApp({initial}:{initial:Snapshot}){
           <p>{data.app_state==='STOPPED'?'No session is running; live market data is not published.':'Live market data unavailable.'}</p></article>)}
 
       {page==='Activity'&&<LiveActivityPage events={model?.runtime.events??[]} now={now}/>}
+
+      {page==='Wallet'&&<><div className="real-money"><strong>BITSO WALLET — READ ONLY</strong>
+        <p>Status {data.wallet?.status??'UNAVAILABLE'}{data.wallet?.error?` · ${data.wallet.error}`:''}</p></div>
+        <p>Bitso Wallet may contain funds that do not belong to AutoFund&apos;s trading envelope.</p>
+        <div className="table"><table><thead><tr><th>Currency</th><th>Total</th><th>Available</th>
+          <th>Locked</th><th>Approx MXN</th></tr></thead><tbody>{(data.wallet?.balances??[]).map(row=><tr key={row.currency}>
+          <td>{row.currency}</td><td>{row.total}</td><td>{row.available}</td><td>{row.locked}</td>
+          <td>{row.approx_mxn??'UNKNOWN'}</td></tr>)}</tbody></table></div>
+        {!data.wallet?.balances?.length&&<p>No non-zero wallet balances available.</p>}
+        <h2>AUTOFUND OWNED</h2><dl><dt>Allocated cash</dt><dd>50 MXN</dd>
+          <dt>Current AutoFund cash</dt><dd>{data.cash_mxn} MXN</dd>
+          <dt>Owned BTC</dt><dd>{data.position?.quantity??'0'}</dd>
+          <dt>Average cost</dt><dd>{data.position?.average_cost_mxn??'0'} MXN</dd>
+          <dt>Current mark</dt><dd>{data.position?.mark_mxn??'UNKNOWN'} MXN</dd>
+          <dt>Market value</dt><dd>{data.position?.market_value_mxn??'0'} MXN</dd>
+          <dt>Realized P&amp;L</dt><dd>{data.realized_pnl_mxn} MXN</dd>
+          <dt>Unrealized P&amp;L</dt><dd>{data.position?.unrealized_pnl_mxn??'0'} MXN</dd>
+          <dt>Fees</dt><dd>{Object.keys(data.execution?.fees_by_currency??{}).length
+            ? JSON.stringify(data.execution?.fees_by_currency) : '0'}</dd>
+          <dt>Equity</dt><dd>{data.equity_mxn} MXN</dd></dl></>}
 
       {page==='Positions'&&<>{data.position
         ?<div className="table"><table><tbody>

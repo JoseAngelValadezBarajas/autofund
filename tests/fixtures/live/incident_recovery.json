@@ -1,0 +1,31 @@
+{
+  "description": "Sanitized real-incident shape: acknowledged market BUY, missed local fill projection, positive base fee.",
+  "intent": {
+    "minor_budget": "5",
+    "terminal_local_state": "HALTED"
+  },
+  "order": {
+    "oid": "incident-order",
+    "book": "btc_mxn",
+    "side": "buy",
+    "status": "completed",
+    "original_amount": "0.000005",
+    "unfilled_amount": "0",
+    "price": null
+  },
+  "fill": {
+    "tid": "incident-trade",
+    "oid": "incident-order",
+    "book": "btc_mxn",
+    "side": "buy",
+    "major_currency": "btc",
+    "minor_currency": "mxn",
+    "major": "0.000005",
+    "minor": "-5",
+    "price": "1000000",
+    "created_at": "2026-09-22T05:19:09Z",
+    "fees_amount": "0.00000001",
+    "fees_currency": "btc",
+    "maker_side": "sell"
+  }
+}

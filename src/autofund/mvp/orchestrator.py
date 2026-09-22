@@ -23,7 +23,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.1.1"
+PRODUCT_VERSION = "AutoFund MVP 0.1.2"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -175,6 +175,50 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         # the runner records the exact profile the decision came from.
         self._strategy_fingerprint = ""
         self._champion_fingerprint: str | None = None
+        self.wallet_balances: tuple[Any, ...] = ()
+        self.wallet_status = "UNAVAILABLE"
+        self.wallet_error: str | None = None
+        self.account_balance_contradiction = False
+
+    def _execution_event(self, event: str, payload: dict[str, Any]) -> None:
+        if self._event is None:
+            return
+        mapped = {"INTENT_CREATED": "ORDER_INTENT_CREATED", "SUBMITTING": "ORDER_SUBMITTING",
+                  "SUBMITTED": "ORDER_SUBMITTED", "ACKNOWLEDGED": "ORDER_ACKNOWLEDGED",
+                  "OUTCOME_UNKNOWN": "ORDER_OUTCOME_UNKNOWN", "PARTIALLY_FILLED": "PARTIAL_FILL",
+                  "FILLED": "FILL", "RECONCILED": "RECONCILIATION_PASS",
+                  "HALTED": "RECONCILIATION_FAIL"}.get(event, event)
+        self._event(mapped, component="execution", message=str(payload.get("origin_id", "")),
+                    origin_id=payload.get("origin_id"), oid=payload.get("oid"),
+                    trade_id=payload.get("trade_id"), side=payload.get("side"),
+                    major_quantity=payload.get("major_quantity"), minor_value=payload.get("minor_value"),
+                    fee=payload.get("confirmed_fee"), fee_currency=payload.get("fee_currency"))
+        if event == "FILL_RECOVERED":
+            self._event("LEDGER_UPDATED", component="accounting", message="Confirmed Bitso fill applied",
+                        origin_id=payload.get("origin_id"), trade_id=payload.get("trade_id"))
+            if payload.get("side") == "BUY":
+                self._event("POSITION_OPENED", component="accounting", message="AutoFund position increased")
+            else:
+                inventory = Decimal(str(payload.get("inventory_btc", "0")))
+                self._event("POSITION_CLOSED" if inventory == 0 else "POSITION_REDUCED",
+                            component="accounting", message="AutoFund position updated")
+                self._event("REALIZED_PNL_UPDATED", component="accounting",
+                            message=str(payload.get("realized_pnl_mxn", "0")))
+
+    def _refresh_wallet(self) -> None:
+        try:
+            self.wallet_balances = tuple(self.execution.client.balances())
+            self.wallet_status, self.wallet_error = "PASS", None
+            totals = {row.currency: row.total for row in self.wallet_balances}
+            portfolio = self.execution.public()
+            self.account_balance_contradiction = (
+                Decimal(str(portfolio["inventory_btc"])) > totals.get("btc", Decimal("0"))
+                or Decimal(str(portfolio["cash_mxn"])) > totals.get("mxn", Decimal("0")))
+            if self.account_balance_contradiction:
+                self.wallet_status, self.wallet_error = "DEGRADED", "ACCOUNT_BALANCE_CONTRADICTION"
+        except Exception:
+            self.wallet_balances = ()
+            self.wallet_status, self.wallet_error = "DEGRADED", "WALLET_READ_UNAVAILABLE"
 
     def startup(self) -> dict[str, Any]:
         from autofund.live.client import BitsoProductionLiveClient, LiveCredentials
@@ -197,10 +241,13 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             # "startup recovery failed".
             self._block_with("EXECUTION_JOURNAL_IN_USE")
             raise
-        self.execution = LiveExecution(client, self.journal, LiveConfig(slippage_tolerance=Decimal("0.5")))
+        self.execution = LiveExecution(client, self.journal, LiveConfig(slippage_tolerance=Decimal("0.5")),
+                                       emit=self._execution_event)
         if self.execution.unresolved:
             self.execution.recover()
         reconciled = not self.execution.unresolved
+        self._refresh_wallet()
+        reconciled = reconciled and not self.account_balance_contradiction
         if reconciled:
             # Existing F5 preflight, GET-only, executed once at startup.
             ready, blockers, warnings = self._run_preflight()
@@ -273,6 +320,9 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             raise LiveError("PRODUCTION_PREFLIGHT_REQUIRED")
         # A start decision must never reuse a preflight performed minutes ago.
         self.refresh_production_preflight(event)
+        self._refresh_wallet()
+        if self.account_balance_contradiction:
+            self._block_with("ACCOUNT_BALANCE_CONTRADICTION")
         if self.preflight_status != PREFLIGHT_PASS:
             raise SessionStartBlocked(self.preflight_blockers)
         super().start(config, event)
@@ -391,14 +441,32 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         mark = self.last_preflight.depth.best_bid if self.last_preflight else Decimal("0")
         deployed = inventory * mark
         equity = Decimal(str(row["cash_mxn"])) + deployed
+        cost_basis = Decimal(str(row["cost_basis_mxn"]))
+        average_cost = cost_basis / inventory if inventory else Decimal("0")
+        unrealized = deployed - cost_basis
+        wallet = [{"currency": balance.currency.upper(), "total": str(balance.total),
+                   "available": str(balance.available), "locked": str(balance.locked),
+                   "approx_mxn": (str(balance.total) if balance.currency == "mxn" else
+                                  str(balance.total * mark) if balance.currency == "btc" and mark > 0 else None)}
+                  for balance in self.wallet_balances if balance.total or balance.available or balance.locked]
         return {**super().snapshot(), "cash_mxn": str(row["cash_mxn"]), "equity_mxn": str(equity),
                 "deployed_mxn": str(deployed), "accounting_status": "PASS",
+                "wallet": {"status": self.wallet_status, "error": self.wallet_error,
+                           "read_only": True, "balances": wallet},
                 "position": None if inventory == 0 else {"asset": "BTC", "quantity": str(inventory),
-                    "average_cost_mxn": str(row["cost_basis_mxn"]), "mark_mxn": str(mark),
+                    "average_cost_mxn": str(average_cost), "cost_basis_mxn": str(cost_basis), "mark_mxn": str(mark),
                     "market_value_mxn": str(deployed), "realized_pnl_mxn": str(row["realized_pnl_mxn"]),
-                    "unrealized_pnl_mxn": str(equity - AUTHORIZED_CAPITAL), "fees_mxn": "confirmed-ledger",
-                    "strategy_version": "0.1"}, "orders": len(row["orders"]),
+                    "unrealized_pnl_mxn": str(unrealized), "fees": row["fees_by_currency"],
+                    "strategy_version": "0.1", "status": "OPEN"}, "orders": len(row["orders"]),
                 "fills": len(row["ledger"]) - 1, "realized_pnl_mxn": str(row["realized_pnl_mxn"]),
+                "unrealized_pnl_mxn": str(unrealized), "fees_mxn": str(row["fees_mxn"]),
+                "execution": {"reconciliation_state": row["reconciliation_state"],
+                              "orders": row["order_count"], "fills": row["fill_count"],
+                              "fees_by_currency": row["fees_by_currency"],
+                              "fees_mxn": row["fees_mxn"],
+                              "gross_realized_pnl_mxn": row["gross_realized_pnl_mxn"],
+                              "net_realized_pnl_mxn": row["realized_pnl_mxn"],
+                              "buy": row["buy"], "sell": row["sell"]},
                 "capital_status": "CAPITAL_NOT_EXECUTABLE" if Decimal(str(row["cash_mxn"])) < Decimal("10.1") else "EXECUTABLE"}
 
 
@@ -515,6 +583,8 @@ class AutoFundOrchestrator:
             self._transition(AppState.RECOVERING)
             self._checkpoint("RECOVERY_STARTED", component="orchestrator", message="Loading durable state")
             try:
+                if isinstance(self.runner, ProductionAutonomousRunner):
+                    self.runner._event = self._checkpoint
                 evidence = self.runner.startup()
                 if evidence.get("unresolved_orders") or not evidence.get("reconciled", False):
                     self._transition(AppState.HALTED)
@@ -647,8 +717,9 @@ class AutoFundOrchestrator:
             self._checkpoint("SESSION_STOPPED", component="orchestrator", message="Session finalized")
         snap = self.runner.snapshot()
         view = self._session_view()
+        net_pnl = Decimal(str(snap.get("equity_mxn", AUTHORIZED_CAPITAL))) - AUTHORIZED_CAPITAL
         metrics = {"orders": snap.get("orders", 0), "fills": snap.get("fills", 0),
-                   "net_pnl_mxn": snap.get("realized_pnl_mxn", "0"), "fees_mxn": snap.get("fees_mxn", "0")}
+                   "net_pnl_mxn": str(net_pnl), "fees_mxn": snap.get("fees_mxn", "0")}
         # Adaptive learning runs at completion only; it can never alter hard safety.
         learning = self.adaptive.observe_session(rows=list(self.telemetry.rows), metrics=metrics,
                                                  stop_reason=self.session_stop_reason,
@@ -668,9 +739,11 @@ class AutoFundOrchestrator:
             time_facts={"actual_runtime_seconds": view["actual_runtime_seconds"],
                         "configured_duration_seconds": view["max_duration_seconds"]},
             learning=learning,
-            facts={"metrics": metrics,
+            facts={"metrics": metrics, "portfolio": snap.get("position"),
+                   "wallet": snap.get("wallet"), "execution": snap.get("execution"),
                    "initial_equity_mxn": str(AUTHORIZED_CAPITAL),
                    "final_equity_mxn": str(snap.get("equity_mxn", AUTHORIZED_CAPITAL)),
+                   "realized_pnl_mxn": str(snap.get("realized_pnl_mxn", "0")),
                    "unrealized_pnl_mxn": str(snap.get("unrealized_pnl_mxn", "0")),
                    "max_deployment_mxn": str(snap.get("deployed_mxn", "0")),
                    "execution_quality": {}, "halts": 1 if result == "HALTED" else 0})

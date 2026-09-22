@@ -1,16 +1,17 @@
 """MVP lifecycle integration with the existing F5 GET-only Production preflight.
 
 Offline only: the F5 transport is replaced by the certified fake used by the live
-suite. Nothing here may reach Bitso and no order POST is permitted.
+suite. Nothing here may reach Bitso; explicit lifecycle tests POST only to the fake.
 """
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from live.test_execution import FakeTransport
+from live.test_execution import FakeTransport, trade
 
 from autofund.mvp.api import create_mvp_app
 from autofund.mvp.app import production_scanner_source
@@ -51,9 +52,12 @@ def test_startup_preflight_is_get_only_and_reaches_stopped_ready(production):
     assert app.state is AppState.STOPPED and app.auto_execution is False
     readiness = app.snapshot()["production_preflight"]
     assert readiness["ready"] is True and readiness["label"] == "READY"
-    assert readiness["production_post_count"] == 0 and readiness["production_get_count"] == 4
+    assert readiness["production_post_count"] == 0 and readiness["production_get_count"] == 5
     assert runner.last_preflight.ready
     assert transport.posts == 0
+    wallet = app.snapshot()["wallet"]
+    assert wallet["status"] == "PASS" and wallet["read_only"] is True
+    assert {row["currency"] for row in wallet["balances"]} == {"MXN", "BTC"}
     assert {call for call in transport.calls} == {
         "GET /api/v3/balance", "GET /api/v3/fees", "GET /api/v3/available_books", ORDER_BOOK}
 
@@ -206,3 +210,84 @@ def test_real_app_scanner_wiring_reuses_initialized_production_fee_client(produc
     # One startup/preflight fee GET plus one scanner snapshot, never one per book.
     assert transport.calls.count("GET /api/v3/fees") == 2
     assert transport.posts == before_posts == 0
+
+
+def test_wallet_api_is_get_only_and_separates_account_from_portfolio(production):
+    app, _runner, transport = production
+    app.startup()
+    http = TestClient(create_mvp_app(app))
+    response = http.get("/api/v1/mvp/wallet")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bitso_wallet"]["read_only"] is True
+    assert body["bitso_wallet"]["balances"][1]["total"] == "5"
+    assert body["autofund_portfolio"]["position"] is None
+    assert body["autofund_portfolio"]["cash_mxn"] == "50"
+    assert transport.posts == 0
+    assert not any(route.path.startswith("/api/v1/mvp/wallet") and "POST" in route.methods
+                   for route in http.app.routes)
+
+
+def test_wallet_failure_degrades_view_without_mutating_ledger(production):
+    app, runner, transport = production
+    app.startup()
+    before = runner.execution.wallet.ledger
+    runner.execution.client.balances = lambda: (_ for _ in ()).throw(RuntimeError("down"))
+    runner._refresh_wallet()
+    assert runner.execution.wallet.ledger == before
+    assert app.snapshot()["wallet"]["status"] == "DEGRADED"
+    assert app.snapshot()["wallet"]["error"] == "WALLET_READ_UNAVAILABLE"
+    assert transport.posts == 0
+
+
+def test_wallet_unknown_asset_has_no_fabricated_mxn_mark(production):
+    from autofund.exchanges.bitso.models import ExchangeBalance
+    app, runner, transport = production
+    app.startup()
+    runner.wallet_balances = (*runner.wallet_balances,
+                              ExchangeBalance("eth", D("2"), D("0"), D("2")),
+                              ExchangeBalance("xrp", D("0"), D("0"), D("0")))
+    wallet = app.snapshot()["wallet"]
+    eth = next(row for row in wallet["balances"] if row["currency"] == "ETH")
+    assert eth["approx_mxn"] is None
+    assert all(row["currency"] != "XRP" for row in wallet["balances"])
+    assert transport.posts == 0
+
+
+def test_account_balance_contradiction_blocks_start_without_post(production):
+    app, runner, transport = production
+    app.startup()
+    def contradiction():
+        runner.account_balance_contradiction = True
+        runner.wallet_status = "DEGRADED"
+        runner.wallet_error = "ACCOUNT_BALANCE_CONTRADICTION"
+    runner._refresh_wallet = contradiction
+    with pytest.raises(SessionStartBlocked) as blocked:
+        app.start(SessionConfig(), CONFIRMATION)
+    assert "ACCOUNT_BALANCE_CONTRADICTION" in blocked.value.blockers
+    assert app.state is AppState.STOPPED and app.auto_execution is False
+    assert transport.posts == 0
+
+
+def test_offline_real_buy_lifecycle_reaches_report_and_handoff(production):
+    app, runner, transport = production
+    app.startup()
+    original = runner.execution.submit_authorized
+    def fill_then_submit(intent):
+        transport.rows = [trade(intent.origin_id, minor=str(intent.minor_budget))]
+        original(intent)
+    runner.execution.submit_authorized = fill_then_submit
+    app.start(SessionConfig(), CONFIRMATION)
+    runner.handle_signal("BUY")
+    app.stop()
+    assert transport.posts == 1
+    assert app.snapshot()["position"]["status"] == "OPEN"
+    root = app.artifacts / app.session_id
+    report = json.loads((root / "report.json").read_text())
+    handoff = json.loads((root / "handoff.json").read_text())
+    assert report["execution"]["order_submitting"] >= 1
+    assert report["execution"]["order_acknowledged"] >= 1
+    assert report["execution"]["fills"] >= 1
+    assert report["financial"]["final_equity_mxn"] != "50"
+    assert handoff["financial_truth"]["execution"]["reconciliation_state"] == "PASS"
+    assert handoff["financial_truth"]["portfolio"]["quantity"] == "0.0000108910891"

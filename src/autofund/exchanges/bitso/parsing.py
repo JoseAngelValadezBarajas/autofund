@@ -151,7 +151,9 @@ def orders(payload: object) -> tuple[RemoteOrder, ...]:
             number(row.get("original_amount")),
             number(row.get("unfilled_amount")),
         )
-        price = number(row.get("price"))
+        # Bitso omits/nulls the limit price for completed market orders. The
+        # execution fills remain the authoritative price evidence.
+        price = number(row["price"]) if row.get("price") is not None else Decimal("0")
         if original < 0 or not 0 <= unfilled <= original or price < 0:
             raise ExchangeInvariantError("invalid remaining order amounts")
         result.append(
@@ -196,10 +198,6 @@ def fills(payload: object) -> tuple[ExchangeTradeFill, ...]:
         except ValueError:
             raise ExchangeInvariantError("invalid fill timestamp") from None
         fee = number(row["fees_amount"]) if row.get("fees_amount") is not None else None
-        if fee is not None and fee > 0:
-            raise ExchangeInvariantError(
-                "fee rebate unsupported; requires explicit accounting"
-            )
         maker = row.get("maker_side")
         if maker is not None and maker not in ("buy", "sell"):
             raise ExchangeInvariantError("invalid maker side")
@@ -215,6 +213,9 @@ def fills(payload: object) -> tuple[ExchangeTradeFill, ...]:
                 price,
                 stamp.astimezone(UTC),
                 maker == row.get("side") if maker is not None else None,
+                # Production and Stage have emitted opposite signs for this
+                # debit field. Accounting consumes the confirmed magnitude;
+                # fee currency determines whether it reduces base or quote.
                 abs(fee) if fee is not None else None,
                 text(row["fees_currency"]) if row.get("fees_currency") else None,
             )

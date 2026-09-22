@@ -169,12 +169,21 @@ def test_fill_payload_and_missing_fee(fixture_data):
     assert parsing.fills(rows)[0].confirmed_fee is None
 
 
+def test_production_market_order_null_price_and_positive_fee_are_normalized(fixture_data):
+    order = {"oid": "remote-1", "origin_id": "af-live-" + "a" * 32,
+             "book": "btc_mxn", "side": "buy", "status": "completed",
+             "original_amount": "0.003", "unfilled_amount": "0", "price": None}
+    assert parsing.orders([order])[0].price == D("0")
+    trade = dict(fixture_data["fills"][0])
+    trade["fees_amount"] = "0.03"
+    assert parsing.fills([trade])[0].confirmed_fee == D("0.03")
+
+
 @pytest.mark.parametrize(
     "changes",
     [
         {"major": "-0.003"},
         {"minor": "3"},
-        {"fees_amount": "0.03"},
         {"major_currency": "eth"},
         {"created_at": "2026-09-18T00:00:00"},
         {"price": 1.0},

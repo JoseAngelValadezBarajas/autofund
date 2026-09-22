@@ -17,8 +17,10 @@ CHECKPOINTS = frozenset({
     "MARKET_QUALITY_CHANGED", "CANDLE_CLOSED", "STRATEGY_EVALUATED", "SIGNAL_GENERATED", "NO_SIGNAL",
     "CAPITAL_CHECK_PASS", "CAPITAL_CHECK_REJECT", "RISK_CHECK_PASS", "RISK_CHECK_REJECT",
     "FINAL_MARKET_CHECK_PASS", "FINAL_MARKET_CHECK_REJECT", "ORDER_INTENT_CREATED", "ORDER_SUBMITTING",
-    "ORDER_ACKNOWLEDGED", "ORDER_OUTCOME_UNKNOWN", "PARTIAL_FILL", "FILL", "RECONCILIATION_STARTED",
+    "ORDER_SUBMITTED", "ORDER_ACKNOWLEDGED", "ORDER_OUTCOME_UNKNOWN", "PARTIAL_FILL", "FILL", "RECONCILIATION_STARTED",
     "RECONCILIATION_PASS", "RECONCILIATION_FAIL", "LEDGER_UPDATED", "POSITION_OPENED", "POSITION_CLOSED",
+    "POSITION_REDUCED", "REALIZED_PNL_UPDATED", "ORDER_RECOVERY_STARTED", "ORDER_RECOVERED",
+    "FILL_RECOVERED", "POSITION_RECOVERED",
     "LOSS_LIMIT_WARNING", "LOSS_LIMIT_HIT", "LEARNING_OBSERVATION", "CHALLENGER_CREATED",
     "CHALLENGER_EVALUATED", "CHALLENGER_PROMOTED", "CHALLENGER_REJECTED",
     "MARKET_SCAN_STARTED", "MARKET_SCAN_COMPLETED", "MARKET_CANDIDATE_ELIGIBLE",
@@ -101,7 +103,7 @@ class SessionTelemetry:
                       "ended_at": ended.isoformat().replace("+00:00", "Z"),
                       "stop_reason": stop_reason, **(time_facts or {})}
         identity_block = {"session_id": self.session_id, "run_id": self.run_id,
-                          "product_version": "AutoFund MVP 0.1.1",
+                          "product_version": "AutoFund MVP 0.1.2",
                           "strategy_version": self.strategy_version, **(identity or {})}
         scanner = scanner_evidence(rows)
         facts_with_latency = {**facts, "largest_latency_ms": round(largest, 3)}

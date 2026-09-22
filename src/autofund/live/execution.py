@@ -52,6 +52,7 @@ class LiveExecution:
         self.accounting = ConfirmedFillAccounting(self.wallet)
         self.intents: dict[str, dict[str, Any]] = {}
         self.states: dict[str, str] = {}
+        self.state_metadata: dict[str, dict[str, object]] = {}
         self.submitting: set[str] = set()
         self.oids: dict[str, str] = {}
         self._last_orderbook_sequence: int | None = None
@@ -120,6 +121,7 @@ class LiveExecution:
             if state in {"SUBMITTED", "ACKNOWLEDGED", "OUTCOME_UNKNOWN", "PARTIALLY_FILLED", "FILLED", "RECONCILED"} and origin not in self.submitting:
                 raise LiveError("LIVE_STATE_WITHOUT_SUBMISSION")
             self.states[origin] = state
+            self.state_metadata[origin] = dict(data)
             if data.get("oid"):
                 oid = identifier(parsing.text(data["oid"]))
                 if origin in self.oids and oid != self.oids[origin]:
@@ -142,9 +144,16 @@ class LiveExecution:
         self._restore("LIVE_STATE", parsing.obj(json.loads(canonical_json(data))))
         if self._emit:
             try:
-                self._emit(state, self.public())
+                self._emit(state, {**self.public(), **data})
             except Exception:
                 pass  # Monitoring failure cannot change financial behavior.
+
+    def emit(self, event: str, **fields: Any) -> None:
+        if self._emit:
+            try:
+                self._emit(event, {**self.public(), **fields})
+            except Exception:
+                pass
 
     def check(self, budget: Decimal | None = None) -> Preflight:
         checked = preflight(self.client, self.config, self.wallet, unresolved=bool(self.unresolved), budget=budget,
@@ -324,10 +333,16 @@ class LiveExecution:
                 continue
             if self.states[known] == "RECONCILED":
                 continue
+            historical = self.states[known] == "HALTED"
+            self.emit("ORDER_RECOVERY_STARTED" if historical else "RECONCILIATION_STARTED",
+                      origin_id=known)
             try:
                 self._recover_one(known)
-            except Exception:
-                self.state(known, "HALTED", reason="HALTED_UNCERTAIN_ORDER")
+            except Exception as exc:
+                message = str(exc)
+                reason = ("CONTRADICTORY_REMOTE_STATE" if "CONTRADICTORY" in message or "UNRELATED" in message
+                          else "HALTED_UNCERTAIN_ORDER")
+                self.state(known, "HALTED", reason=reason)
 
     @financial
     def _recover_one(self, origin: str) -> None:
@@ -360,6 +375,10 @@ class LiveExecution:
                 probe.apply(fill)
                 self.journal.append("LIVE_FILL", {"origin_id": origin, "fill": fill})
                 self.accounting.apply(fill)
+                self.emit("FILL_RECOVERED", origin_id=origin, trade_id=fill.trade_id,
+                          oid=fill.exchange_order_id, side=fill.side.value,
+                          major_quantity=fill.major_quantity, minor_value=fill.minor_value,
+                          confirmed_fee=fill.confirmed_fee, fee_currency=fill.fee_currency)
                 self.state(origin, "PARTIALLY_FILLED", oid=fill.exchange_order_id)
             own = [x for x in self.accounting.processed_fill_ids.values() if x.exchange_order_id == self.oids.get(origin)]
             expected_side = Side(str(self.intents[origin].get("side", "buy")).upper())
@@ -378,19 +397,51 @@ class LiveExecution:
                            "fills": own, "ledger": self.wallet.ledger}),
                            terminal_evidence="BUDGET_FULLY_FILLED" if complete_budget else "REMOTE_CANCELLED" if cancelled else "REMOTE_COMPLETED_WITH_CONFIRMED_FILLS",
                            balance_reconciliation="PRIVATE_EVIDENCE_ONLY_EXTERNAL_ACTIVITY_NOT_ATTRIBUTED")
+                self.emit("ORDER_RECOVERED", origin_id=origin, oid=self.oids.get(origin),
+                          fills=len(own), state="RECONCILED")
+                self.emit("POSITION_RECOVERED", origin_id=origin,
+                          inventory_btc=self.public()["inventory_btc"], cash_mxn=self.public()["cash_mxn"])
                 return
         self.state(origin, "HALTED", reason="HALTED_UNCERTAIN_ORDER")
 
     @financial
     def public(self) -> dict[str, Any]:
         position = self.wallet.positions.get("BTC/MXN")
+        fills = tuple(self.accounting.processed_fill_ids.values())
+        buys = tuple(fill for fill in fills if fill.side is Side.BUY)
+        sells = tuple(fill for fill in fills if fill.side is Side.SELL)
+        fees: dict[str, Decimal] = {}
+        for fill in fills:
+            if fill.confirmed_fee is not None and fill.fee_currency is not None:
+                fees[fill.fee_currency] = fees.get(fill.fee_currency, Decimal("0")) + fill.confirmed_fee
+        fees_mxn = sum((entry.fee_mxn for entry in self.wallet.ledger), Decimal("0"))
+        sell_fees_mxn = sum((entry.fee_mxn for entry in self.wallet.ledger
+                             if entry.type.value == "SELL"), Decimal("0"))
+        net_realized = self.wallet.realized_pnl()
+        def aggregate(rows: tuple[ExchangeTradeFill, ...]) -> dict[str, Any]:
+            major = sum((fill.major_quantity for fill in rows), Decimal("0"))
+            minor = sum((fill.minor_value for fill in rows), Decimal("0"))
+            return {"quantity": major, "value_mxn": minor,
+                    "vwap": minor / major if major else None}
         return {"mode": "MICRO-LIVE", "real_money": True, "auto_execution": "DISABLED",
                 "allocated_capital": self.config.allocated_capital,
                 "max_deployment_mxn": self.config.allocated_capital * self.config.max_deployment,
                 "single_order_cap": self.config.single_order_cap, "cash_mxn": self.wallet.cash_mxn,
                 "inventory_btc": position.quantity if position else Decimal("0"),
                 "cost_basis_mxn": position.cost_basis_mxn if position else Decimal("0"),
-                "realized_pnl_mxn": self.wallet.realized_pnl(), "ledger": self.wallet.ledger,
+                "realized_pnl_mxn": net_realized,
+                "gross_realized_pnl_mxn": net_realized + sell_fees_mxn,
+                "fees_mxn": fees_mxn, "ledger": self.wallet.ledger,
+                "fills": fills, "fill_count": len(fills), "order_count": len(self.intents),
+                "buy": aggregate(buys), "sell": aggregate(sells),
+                "fees_by_currency": fees,
+                "reconciliation_state": "PASS" if not self.unresolved else "BLOCKED",
                 "unresolved_orders": self.unresolved,
-                "orders": [{"origin_id": key, "state": state, "oid": self.oids.get(key)}
+                "orders": [{"origin_id": key, "state": state, "oid": self.oids.get(key),
+                            "recovery_state": (
+                                "RECONCILED" if state == "RECONCILED" else
+                                "PARTIALLY_FILLED_RECOVERED" if state == "PARTIALLY_FILLED" else
+                                "INTENT_NOT_SUBMITTED" if key not in self.submitting else
+                                "CONTRADICTORY_REMOTE_STATE" if self.state_metadata.get(key, {}).get("reason") == "CONTRADICTORY_REMOTE_STATE" else
+                                "POST_OUTCOME_UNKNOWN")}
                            for key, state in self.states.items()]}

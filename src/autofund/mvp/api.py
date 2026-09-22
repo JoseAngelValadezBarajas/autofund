@@ -54,7 +54,7 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
             # Release the backend publication thread; never touches financial state.
             orchestrator.shutdown()
 
-    app = FastAPI(title="AutoFund MVP 0.1.1", version="0.1.1", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app = FastAPI(title="AutoFund MVP 0.1.2", version="0.1.2", docs_url=None, redoc_url=None, lifespan=lifespan)
     control_token = secrets.token_urlsafe(32)
     allowed_hosts = {host, f"{host}:{port}", "localhost", f"localhost:{port}", "testserver"}
 
@@ -85,6 +85,15 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
 
     @app.get("/api/v1/mvp")
     def state() -> dict[str, Any]: return orchestrator.snapshot()
+
+    @app.get("/api/v1/mvp/wallet")
+    def wallet() -> dict[str, Any]:
+        """Read-only account evidence, explicitly separate from AutoFund ownership."""
+        snapshot = orchestrator.snapshot()
+        return {"bitso_wallet": snapshot.get("wallet", {"status": "UNAVAILABLE", "balances": []}),
+                "autofund_portfolio": {"cash_mxn": snapshot.get("cash_mxn"),
+                                       "equity_mxn": snapshot.get("equity_mxn"),
+                                       "position": snapshot.get("position")}}
 
     @app.get("/api/v1/mvp/scanner")
     def scanner() -> dict[str, Any]: return orchestrator.scanner_evidence()

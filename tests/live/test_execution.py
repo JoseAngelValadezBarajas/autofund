@@ -21,6 +21,7 @@ from autofund.live.preflight import preflight
 
 D = Decimal
 SCENARIOS = json.loads((Path(__file__).parents[1] / "fixtures" / "live" / "scenarios.json").read_text())
+INCIDENT = json.loads((Path(__file__).parents[1] / "fixtures" / "live" / "incident_recovery.json").read_text())
 
 
 class Terminal(io.StringIO):
@@ -43,6 +44,7 @@ class FakeTransport:
         self.book_time: datetime | None = None
         self.sequence = 1
         self.post_oid = "order1"
+        self.post_bodies: list[dict[str, str]] = []
 
     def request(self, method, path, body, authorization, permit=None):
         self.calls.append(method + " " + path)
@@ -50,6 +52,7 @@ class FakeTransport:
             assert permit is not None
             permit.consume(body)
             self.posts += 1
+            self.post_bodies.append(json.loads(body))
             if self.timeout:
                 raise TimeoutError("fake-secret-MUST-NOT-ESCAPE")
             return {"oid": self.post_oid}
@@ -120,7 +123,7 @@ def test_success_ledger_dedupe_and_private_balance_isolation(setup):
     assert engine.wallet.cash_mxn == D("44.95")
     assert engine.public()["inventory_btc"] == D("0.000005")
     assert len(engine.wallet.ledger) == 2
-    assert "100000" not in str(engine.public())
+    assert "balances" not in engine.public()
     with pytest.raises(LiveError):
         submit(engine, intent)
     assert fake.posts == 1
@@ -145,6 +148,35 @@ def test_session_authorized_buy_then_owned_sell_each_posts_once(setup):
     assert fake.posts == 2
     assert engine.wallet.positions["BTC/MXN"].quantity == 0
     assert not engine.unresolved
+
+
+def test_close_position_sells_only_autofund_inventory_not_foreign_wallet_btc(setup):
+    engine, fake, _ = setup
+    buy = engine.create(engine.check(D("5")))
+    fake.rows = [trade(buy.origin_id)]
+    engine.submit_authorized(buy)
+    owned = engine.wallet.positions["BTC/MXN"].quantity
+    assert owned == D("0.000005") and D("5") > owned  # fake account holds foreign BTC
+    sell = engine.create_sell(owned)
+    fake.post_oid = "order2"
+    fake.rows = [sell_trade(sell.origin_id, major=str(owned))]
+    engine.submit_sell_authorized(sell)
+    assert fake.post_bodies[-1]["major"] == str(owned)
+    assert engine.wallet.positions["BTC/MXN"].quantity == 0
+
+
+def test_partial_sell_reduces_only_executed_autofund_inventory(setup):
+    engine, fake, _ = setup
+    buy = engine.create(engine.check(D("5")))
+    fake.rows = [trade(buy.origin_id)]
+    engine.submit_authorized(buy)
+    sell = engine.create_sell(D("0.000002"))
+    fake.post_oid = "order2"
+    fake.rows = [sell_trade(sell.origin_id, major="0.000002", minor="2")]
+    engine.submit_sell_authorized(sell)
+    assert engine.wallet.positions["BTC/MXN"].quantity == D("0.000003")
+    assert engine.public()["sell"]["quantity"] == D("0.000002")
+    assert fake.posts == 2
 
 
 def test_sell_cannot_exceed_autofund_owned_inventory(setup):
@@ -488,3 +520,41 @@ def test_committed_fill_rebuilt_after_crash_before_wallet_apply(setup):
     assert not restarted.unresolved
     assert fake.posts == 0
     restarted.journal.close()
+
+
+def test_incident_shape_halted_after_ack_recovers_positive_base_fee_without_post(setup):
+    engine, fake, journal = setup
+    intent = engine.create(engine.check(D("5")))
+    engine.state(intent.origin_id, "SUBMITTING")
+    oid = INCIDENT["order"]["oid"]
+    engine.state(intent.origin_id, "SUBMITTED", oid=oid)
+    engine.state(intent.origin_id, "ACKNOWLEDGED", oid=oid)
+    engine.state(intent.origin_id, "HALTED", reason="HALTED_UNCERTAIN_ORDER")
+    recovered = {**INCIDENT["fill"], "origin_id": intent.origin_id,
+                 "created_at": datetime.now(UTC).isoformat()}
+    fake.rows = [recovered]
+    journal.close()
+    first = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config)
+    first.recover()
+    assert first.states[intent.origin_id] == "RECONCILED"
+    assert first.public()["inventory_btc"] == D("0.00000499")
+    assert first.wallet.cash_mxn == D("45")
+    assert fake.posts == 0
+    first.journal.close()
+    second = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config)
+    assert len(second.wallet.ledger) == 2
+    assert second.public()["inventory_btc"] == D("0.00000499")
+    assert not second.unresolved and fake.posts == 0
+    second.journal.close()
+
+
+def test_execution_emits_recovery_and_financial_lifecycle(setup):
+    engine, fake, _ = setup
+    events: list[str] = []
+    engine._emit = lambda event, payload: events.append(event)
+    intent = engine.create(engine.check(D("5")))
+    fake.rows = [trade(intent.origin_id)]
+    engine.submit_authorized(intent)
+    assert {"INTENT_CREATED", "SUBMITTING", "ACKNOWLEDGED", "RECONCILIATION_STARTED",
+            "FILL_RECOVERED", "PARTIALLY_FILLED", "FILLED", "RECONCILED",
+            "ORDER_RECOVERED", "POSITION_RECOVERED"}.issubset(events)

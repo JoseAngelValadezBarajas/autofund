@@ -25,9 +25,11 @@ CANDLE_CLOSED = "CANDLE_CLOSED"
 MARKET_EVENTS = frozenset({"MARKET_CONNECTED", "MARKET_DISCONNECTED", "CANDLE_CLOSED",
                            "MARKET_QUALITY_CHANGED"})
 EXECUTION_EVENTS = ("ORDER_INTENT_CREATED", "ORDER_SUBMITTING", "ORDER_ACKNOWLEDGED",
-                    "ORDER_OUTCOME_UNKNOWN", "PARTIAL_FILL", "FILL", "RECONCILIATION_STARTED",
+                    "ORDER_SUBMITTED", "ORDER_OUTCOME_UNKNOWN", "PARTIAL_FILL", "FILL", "RECONCILIATION_STARTED",
                     "RECONCILIATION_PASS", "RECONCILIATION_FAIL", "LEDGER_UPDATED",
-                    "POSITION_OPENED", "POSITION_CLOSED")
+                    "POSITION_OPENED", "POSITION_REDUCED", "POSITION_CLOSED",
+                    "REALIZED_PNL_UPDATED", "ORDER_RECOVERY_STARTED", "ORDER_RECOVERED",
+                    "FILL_RECOVERED", "POSITION_RECOVERED")
 REJECTION_EVENTS = ("CAPITAL_CHECK_REJECT", "RISK_CHECK_REJECT", "FINAL_MARKET_CHECK_REJECT")
 HALT_EVENTS = ("AUTO_HALT_TRIGGERED", "LOSS_LIMIT_HIT", "KILL_SWITCH_TRIGGERED")
 LEARNING_EVENTS = ("LEARNING_OBSERVATION", "CHALLENGER_CREATED", "CHALLENGER_EVALUATED",
@@ -173,6 +175,10 @@ def build_report(rows: list[dict[str, Any]], *, identity: dict[str, Any], time_f
     evaluations = [row for row in rows if row.get("event") == STRATEGY_EVALUATED]
     metrics: dict[str, Any] = dict(facts.get("metrics", {}))
     execution_exercised = any(events.get(name, 0) > 0 for name in EXECUTION_EVENTS)
+    execution_counts = {name.lower(): events.get(name, 0) for name in EXECUTION_EVENTS}
+    execution_facts = dict(facts.get("execution") or {})
+    net_pnl = _decimal(metrics.get("net_pnl_mxn")) or ZERO
+    fees_mxn = _decimal(metrics.get("fees_mxn")) or ZERO
     return {
         "schema": REPORT_SCHEMA,
         "identity": {**identity, "config": config},
@@ -192,15 +198,23 @@ def build_report(rows: list[dict[str, Any]], *, identity: dict[str, Any], time_f
                      "distance_to_signal": _distance_summary(rows),
                      "near_signal_count": _distance_summary(rows)["near_signal_count"],
                      "regime_distribution": _regime_distribution(rows)},
-        "execution": {name.lower(): events.get(name, 0) for name in EXECUTION_EVENTS}
-                     | {"exercised": execution_exercised},
+        "execution": execution_counts | {"exercised": execution_exercised,
+                     "intents": execution_counts.get("order_intent_created", 0),
+                     "submissions": execution_counts.get("order_submitting", 0),
+                     "acks": execution_counts.get("order_acknowledged", 0),
+                     "unknown_outcomes": execution_counts.get("order_outcome_unknown", 0),
+                     "orders": execution_facts.get("orders", execution_counts.get("order_acknowledged", 0)),
+                     "fills": execution_facts.get("fills", execution_counts.get("fill_recovered", 0)),
+                     "recovered_fills": execution_counts.get("fill_recovered", 0),
+                     "financial_truth": execution_facts},
         "risk": {name.lower(): events.get(name, 0) for name in REJECTION_EVENTS},
         "financial": {"initial_equity_mxn": str(facts.get("initial_equity_mxn", "50")),
                       "final_equity_mxn": str(facts.get("final_equity_mxn", metrics.get("net_pnl_mxn", "0"))),
-                      "realized_pnl_mxn": str(metrics.get("net_pnl_mxn", "0")),
+                      "gross_pnl_mxn": str(net_pnl + fees_mxn),
+                      "realized_pnl_mxn": str(facts.get("realized_pnl_mxn", "0")),
                       "unrealized_pnl_mxn": str(facts.get("unrealized_pnl_mxn", "0")),
-                      "net_pnl_mxn": str(metrics.get("net_pnl_mxn", "0")),
-                      "fees_mxn": str(metrics.get("fees_mxn", "0")),
+                      "net_pnl_mxn": str(net_pnl),
+                      "fees_mxn": str(fees_mxn),
                       "max_drawdown_mxn": str(facts.get("max_drawdown_mxn", "0")),
                       "max_deployment_mxn": str(facts.get("max_deployment_mxn", "0"))},
         "operations": {"warnings": len([row for row in rows if row.get("level") == "WARNING"]),
@@ -208,6 +222,8 @@ def build_report(rows: list[dict[str, Any]], *, identity: dict[str, Any], time_f
                        "halts": sum(events.get(name, 0) for name in HALT_EVENTS),
                        "kill_switch_activations": events.get("KILL_SWITCH_TRIGGERED", 0)},
         "scanner": scanner,
+        "portfolio": facts.get("portfolio"),
+        "wallet": facts.get("wallet"),
     }
 
 
@@ -260,7 +276,8 @@ def build_handoff(rows: list[dict[str, Any]], *, report: dict[str, Any], result:
         "execution_observations": {"exercised": execution["exercised"],
                                    "order_intents": execution["order_intent_created"],
                                    "orders_acknowledged": execution["order_acknowledged"],
-                                   "fills": execution["fill"], "partial_fills": execution["partial_fill"],
+                                   "fills": execution["fills"], "partial_fills": execution["partial_fill"],
+                                   "recovered_fills": execution["recovered_fills"],
                                    "reconciliations": execution["reconciliation_pass"],
                                    "ambiguous_outcomes": execution["order_outcome_unknown"]},
         "risk_observations": {**report["risk"], "halts": report["operations"]["halts"],
@@ -273,6 +290,8 @@ def build_handoff(rows: list[dict[str, Any]], *, report: dict[str, Any], result:
                                    "latency": market["latency"]},
         "learning_observations": learning,
         "scanner_observations": scanner,
+        "financial_truth": {"portfolio": report.get("portfolio"), "wallet": report.get("wallet"),
+                            "execution": execution.get("financial_truth")},
         # Deterministic facts only; no natural-language recommendations.
         "candidate_improvement_signals": signals,
     }
