@@ -90,15 +90,41 @@ def sell_trade(origin: str, tid="trade-sell", minor="5", major="0.000005"):
             "fees_amount": str(-D(minor) * D("0.01")), "fees_currency": "mxn", "maker_side": "buy"}
 
 
+class VirtualClock:
+    """Deterministic monotonic clock whose time only advances when asked.
+
+    Recovery polling must be tested without wall-clock waits, so the fixture
+    injects this clock and a sleep that advances it. Production uses the real
+    monotonic clock and the real bounded window.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += max(0.0, seconds)
+
+
 @pytest.fixture
-def setup(tmp_path, monkeypatch):
+def clock() -> VirtualClock:
+    return VirtualClock()
+
+
+@pytest.fixture
+def setup(tmp_path, monkeypatch, clock):
     # A fake can exercise a human gate in pytest; the real CLI detects pytest.
     for name in ("CI", "PYTEST_CURRENT_TEST", "PLAYWRIGHT_TEST", "AUTOFUND_AUTO_CONFIRM", "CODEX_THREAD_ID"):
         monkeypatch.delenv(name, raising=False)
     fake = FakeTransport()
     journal = LiveExecutionJournal(tmp_path / "live.jsonl")
     client = BitsoProductionLiveClient(LiveCredentials("FAKE", "FAKE", True), transport=fake)
-    engine = LiveExecution(client, journal, LiveConfig(slippage_tolerance=D("0.5")))
+    engine = LiveExecution(client, journal, LiveConfig(slippage_tolerance=D("0.5")),
+                           sleep=clock.sleep, monotonic_clock=clock.monotonic)
     yield engine, fake, journal
     journal.close()
 
@@ -129,7 +155,8 @@ def test_success_ledger_dedupe_and_private_balance_isolation(setup):
     assert fake.posts == 1
     before = engine.wallet.ledger
     journal.close()
-    recovered = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config)
+    recovered = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config,
+                                  sleep=engine._sleep, monotonic_clock=engine._clock)
     assert recovered.wallet.ledger == before
     assert not recovered.unresolved
     recovered.journal.close()
@@ -336,7 +363,8 @@ def test_timeout_recovery_never_retries_post(setup, evidence):
     assert fake.posts == 1
     assert bool(engine.unresolved) == (evidence != "filled")
     journal.close()
-    restarted = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config)
+    restarted = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config,
+                                  sleep=engine._sleep, monotonic_clock=engine._clock)
     restarted.recover()
     assert fake.posts == 1
     if evidence != "filled":
@@ -476,7 +504,8 @@ def test_restart_before_response_never_resubmits(setup, crash_state):
         engine.state(intent.origin_id, crash_state, oid="order1")
     fake.rows = [trade(intent.origin_id)]
     journal.close()
-    restarted = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config)
+    restarted = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config,
+                                  sleep=engine._sleep, monotonic_clock=engine._clock)
     assert restarted.unresolved
     restarted.recover()
     assert not restarted.unresolved
@@ -513,7 +542,8 @@ def test_committed_fill_rebuilt_after_crash_before_wallet_apply(setup):
     fill = engine.client.order_trades(intent.origin_id)[0]
     journal.append("LIVE_FILL", {"origin_id": intent.origin_id, "fill": fill})
     journal.close()
-    restarted = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config)
+    restarted = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config,
+                                  sleep=engine._sleep, monotonic_clock=engine._clock)
     restarted.recover()
     assert restarted.wallet.cash_mxn == D("44.95")
     assert len(restarted.wallet.ledger) == 2
@@ -534,14 +564,16 @@ def test_incident_shape_halted_after_ack_recovers_positive_base_fee_without_post
                  "created_at": datetime.now(UTC).isoformat()}
     fake.rows = [recovered]
     journal.close()
-    first = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config)
+    first = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config,
+                                  sleep=engine._sleep, monotonic_clock=engine._clock)
     first.recover()
     assert first.states[intent.origin_id] == "RECONCILED"
     assert first.public()["inventory_btc"] == D("0.00000499")
     assert first.wallet.cash_mxn == D("45")
     assert fake.posts == 0
     first.journal.close()
-    second = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config)
+    second = LiveExecution(engine.client, LiveExecutionJournal(journal.path), engine.config,
+                                  sleep=engine._sleep, monotonic_clock=engine._clock)
     assert len(second.wallet.ledger) == 2
     assert second.public()["inventory_btc"] == D("0.00000499")
     assert not second.unresolved and fake.posts == 0

@@ -145,6 +145,9 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
     def diagnostics(session_id: str) -> Response:
         if not session_id.startswith("mvp-") or "/" in session_id or "\\" in session_id:
             raise HTTPException(status_code=404)
+        # Refresh the read-only wallet view so the export is current, never a
+        # startup snapshot presented as live.
+        orchestrator.refresh_wallet()
         root = orchestrator.artifacts / session_id
         allowed = ("report.json", "handoff.json", "checkpoint_summary.json", "telemetry.jsonl")
         if not root.is_dir():

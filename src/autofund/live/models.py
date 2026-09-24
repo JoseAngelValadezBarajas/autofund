@@ -24,6 +24,12 @@ class LiveConfig:
     max_market_age_seconds: int = 15
     max_local_snapshot_age_seconds: Decimal = Decimal("1")
     reconciliation_attempts: int = 3
+    # Bounded GET-only window after ACK. `reconciliation_attempts` alone is a
+    # count, not a window: three immediate GETs complete in ~150 ms, which is far
+    # shorter than the exchange's eventual trade visibility. This is a hard
+    # upper bound on how long recovery may poll before the outcome is declared
+    # unknown. It never authorises a second POST.
+    reconciliation_window_seconds: Decimal = Decimal("90")
 
     @financial
     def __post_init__(self) -> None:
@@ -38,6 +44,13 @@ class LiveConfig:
             raise LiveError("INVALID_SLIPPAGE_POLICY")
         if not 1 <= self.max_market_age_seconds <= 15 or not 1 <= self.reconciliation_attempts <= 5:
             raise LiveError("INVALID_BOUNDED_POLICY")
+        window = decimal(self.reconciliation_window_seconds, "reconciliation_window_seconds")
+        if not Decimal("0") <= window <= MAX_RECONCILIATION_WINDOW_SECONDS:
+            raise LiveError("INVALID_RECONCILIATION_WINDOW_POLICY")
+
+
+# Absolute upper bound on the ACK recovery window, independent of configuration.
+MAX_RECONCILIATION_WINDOW_SECONDS = Decimal("300")
 
 
 @dataclass(frozen=True)

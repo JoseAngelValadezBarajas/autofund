@@ -38,6 +38,10 @@ function model(over:Model={}):MvpObservability{
     session:{elapsed_seconds:42,remaining_seconds:3558,max_duration_seconds:3600,max_orders_per_session:10,
       max_session_loss_mxn:'10'},
     metrics:{},
+    signals:{admitted:0,suppressed_pending_order:0,strategy_buy_decisions:0,strategy_sell_decisions:0},
+    blocked_recovery:{blocked:false,origins:[]},
+    runtime_gaps:[],
+    monitored_seconds:null,
     ...rest,
   } as MvpObservability;
 }
@@ -191,4 +195,36 @@ test('open candle is rendered as observational and never as a closed input',()=>
   expect(container.textContent).toContain('Open candle is OBSERVATIONAL ONLY and never a strategy input');
   expect(container.querySelector('[data-candle="OPEN"]')).toBeTruthy();
   expect(container.querySelector('[data-candle="CLOSED"]')).toBeNull();
+});
+
+test('blocked recovery is surfaced and blocks financial writes',()=>{
+  renderOperator(model({blocked_recovery:{blocked:true,origins:['af-live-'+'a'.repeat(32)]}}));
+  expect(screen.getByText(/BLOCKED RECOVERY/)).toBeTruthy();
+  expect(screen.getByText(/automatic execution is off/)).toBeTruthy();
+  expect(screen.getByText(/never re-submits/)).toBeTruthy();
+});
+
+test('signal admission reports decisions, admitted and suppressed counts',()=>{
+  renderOperator(model({signals:{admitted:2,suppressed_pending_order:60,strategy_buy_decisions:61,
+    strategy_sell_decisions:1}}));
+  expect(screen.getByRole('heading',{name:'Signal admission'})).toBeTruthy();
+  expect(screen.getByText('Buy decisions')).toBeTruthy();
+  expect(screen.getByText('61')).toBeTruthy();
+  expect(screen.getByText('Suppressed pending order')).toBeTruthy();
+  expect(screen.getByText('60')).toBeTruthy();
+});
+
+test('runtime gaps are shown as unmonitored wall time',()=>{
+  renderOperator(model({runtime_gaps:[{gap_seconds:'47838.71',last_event_at:'2026-09-23T18:26:03Z',
+    next_event_at:'2026-09-24T07:43:21Z'}],monitored_seconds:21750}));
+  expect(screen.getByRole('heading',{name:'Runtime gaps'})).toBeTruthy();
+  expect(screen.getByText('47838.71')).toBeTruthy();
+  expect(screen.getByText(/not monitored market time/)).toBeTruthy();
+  expect(screen.getByText(/Monitored seconds: 21750/)).toBeTruthy();
+});
+
+test('absent recovery and gap state is reported as nothing pending',()=>{
+  renderOperator(model());
+  expect(screen.getByText('No order is awaiting an unresolved outcome.')).toBeTruthy();
+  expect(screen.getByText('No runtime gap detected.')).toBeTruthy();
 });

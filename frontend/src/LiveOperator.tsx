@@ -25,6 +25,13 @@ export interface MvpObservability {
   session:{elapsed_seconds:number|null;remaining_seconds:number|null;max_duration_seconds:number|null;
     max_orders_per_session:number|null;max_session_loss_mxn:string|null};
   metrics:Record<string,any>;
+  /** 0.1.2 hardening surfaces; optional so older snapshots still render. */
+  signals?:{admitted:number;suppressed_pending_order:number;strategy_buy_decisions:number;
+    strategy_sell_decisions:number};
+  blocked_recovery?:{blocked:boolean;origins:string[]};
+  wallet?:{status:string;observed_at?:string|null;read_only:boolean};
+  runtime_gaps?:{gap_seconds:string;last_event_at:string|null;next_event_at:string}[];
+  monitored_seconds?:number|null;
 }
 
 const unknown='UNKNOWN';
@@ -114,6 +121,31 @@ export function LiveOperatorView({model,now,sessionId,equity,orders,fills,champi
     <ActivityTail events={runtime.events} now={now}/>
     <h2>Operational metrics</h2>
     <Cards rows={[['Orders',String(metrics.order_intents??0)],['Fills',String(metrics.fills??0)],['Signals',String(metrics.signals??0)],['Rejections',String((metrics.capital_reject??0)+(metrics.risk_reject??0)+(metrics.final_market_reject??0))],['Halts',String(metrics.halts??0)],['Market events',String(metrics.market_events??0)],['Closed candles',String(metrics.closed_candles??0)],['Observability',observability.status]]}/>
+    {(model.signals||model.blocked_recovery||model.runtime_gaps?.length)&&<>
+      <h2>Signal admission</h2>
+      {model.signals
+        ?<Cards rows={[['Buy decisions',String(model.signals.strategy_buy_decisions)],
+            ['Sell decisions',String(model.signals.strategy_sell_decisions)],
+            ['Signals admitted',String(model.signals.admitted)],
+            ['Suppressed pending order',String(model.signals.suppressed_pending_order)]]}/>
+        :<p>{NA}</p>}
+      <h2>Order recovery</h2>
+      {model.blocked_recovery?.blocked
+        ?<p className="error">BLOCKED RECOVERY — an acknowledged order has no established financial outcome.
+          New financial writes are blocked and automatic execution is off. Affected origin(s):{' '}
+          {model.blocked_recovery.origins.join(', ')||unknown}. Recovery is GET-only and never re-submits.</p>
+        :<p>No order is awaiting an unresolved outcome.</p>}
+      <h2>Runtime gaps</h2>
+      {model.runtime_gaps?.length
+        ?<><p className="process-flow">Wall-clock runtime includes periods with no executing process. These are
+          not monitored market time.</p>
+          <div className="table"><table><thead><tr><th>Gap seconds</th><th>Last event</th><th>Next event</th></tr></thead>
+            <tbody>{model.runtime_gaps.map((gap,index)=><tr key={index}>
+              <td>{gap.gap_seconds}</td><td>{gap.last_event_at??unknown}</td><td>{gap.next_event_at}</td></tr>)}
+            </tbody></table></div>
+          {model.monitored_seconds!=null&&<p>Monitored seconds: {model.monitored_seconds}</p>}</>
+        :<p>No runtime gap detected.</p>}
+    </>}
   </>;
 }
 

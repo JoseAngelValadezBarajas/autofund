@@ -7,7 +7,9 @@ always produce byte-identical aggregates.
 """
 
 from collections import Counter
+from datetime import datetime
 from decimal import Decimal
+from itertools import pairwise
 from typing import Any
 
 from autofund.decimal_utils import ZERO, financial
@@ -46,6 +48,91 @@ MARKET_DEGRADATIONS = "MARKET_DATA_DEGRADATIONS"
 INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 CHALLENGER_DEFERRED = "CHALLENGER_GENERATION_DEFERRED"
 SCANNER_UNAVAILABLE = "MARKET_SCANNER_EVIDENCE_UNAVAILABLE"
+# Gross price movement that did not survive observed execution costs.
+GROSS_PROFIT_CONSUMED_BY_FEES = "GROSS_PROFIT_CONSUMED_BY_FEES"
+SIGNALS_SUPPRESSED = "SIGNALS_SUPPRESSED_PENDING_UNRESOLVED_ORDER"
+RUNTIME_GAP_DETECTED = "RUNTIME_GAP_DETECTED"
+RECONCILIATION_BLOCKED = "RECONCILIATION_BLOCKED"
+
+# A telemetry gap larger than this cannot be explained by normal loop cadence
+# (5s poll + 1m candles + 300s scans) and indicates suspended or starved execution.
+RUNTIME_GAP_THRESHOLD_SECONDS = Decimal("600")
+
+
+@financial
+def runtime_gaps(rows: list[dict[str, Any]],
+                 threshold: Decimal = RUNTIME_GAP_THRESHOLD_SECONDS) -> dict[str, Any]:
+    """Large telemetry gaps, which mean no process was monitoring the market.
+
+    Used to distinguish real monitoring from wall-clock elapsed time. Evidence
+    only; the cause (suspend, blocking, starvation) is deliberately not inferred
+    unless the observation itself proves it.
+    """
+    parsed: list[tuple[datetime, dict[str, Any]]] = []
+    for row in rows:
+        value = row.get("timestamp_utc")
+        if isinstance(value, str) and value:
+            try:
+                parsed.append((datetime.fromisoformat(value), row))
+            except ValueError:
+                continue
+    gaps: list[dict[str, Any]] = []
+    for (before_at, before), (after_at, after) in pairwise(parsed):
+        seconds = Decimal(str((after_at - before_at).total_seconds()))
+        if seconds > threshold:
+            gaps.append({"last_event_at": before.get("timestamp_utc"), "last_event": str(before.get("event")),
+                         "next_event_at": after.get("timestamp_utc"), "next_event": str(after.get("event")),
+                         "gap_seconds": str(seconds)})
+    total = sum((Decimal(gap["gap_seconds"]) for gap in gaps), ZERO)
+    largest = max((Decimal(gap["gap_seconds"]) for gap in gaps), default=ZERO)
+    return {"count": len(gaps), "total_gap_seconds": str(total), "largest_gap_seconds": str(largest),
+            "threshold_seconds": str(threshold), "gaps": sorted(gaps, key=lambda g: g["last_event_at"])}
+
+
+@financial
+def round_trip_economics(financial_truth: dict[str, Any] | None) -> dict[str, Any]:
+    """Factual completed-round-trip economics from the execution projection.
+
+    Reports whether positive gross movement survived observed execution costs.
+    It never proposes a threshold change.
+    """
+    truth = financial_truth or {}
+    gross = _decimal(truth.get("gross_realized_pnl_mxn")) or ZERO
+    net = _decimal(truth.get("net_realized_pnl_mxn")) or ZERO
+    fees = _decimal(truth.get("fees_mxn")) or ZERO
+    consumed = bool(gross > ZERO and net <= ZERO)
+    return {"round_trip_completed": bool(truth.get("sell") or truth.get("fills")),
+            "gross_realized_pnl_mxn": str(gross), "net_realized_pnl_mxn": str(net),
+            "total_fees_mxn": str(fees), "gross_profit_consumed_by_fees": consumed,
+            "facts": [GROSS_PROFIT_CONSUMED_BY_FEES] if consumed else []}
+
+
+def signal_admission(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Report actionable decisions against admission so none are silently lost.
+
+    Suppression is reported two ways: explicitly (from the dedicated checkpoint
+    added in 0.1.2) and as the derived count of actionable decisions that were
+    never admitted. The derived figure is an upper bound and is labelled as such,
+    because a decision can also be declined for a non-blocking reason.
+    """
+    evaluations = [row for row in rows if row.get("event") == STRATEGY_EVALUATED]
+    buys = sum(1 for row in evaluations if row.get("decision") == "BUY")
+    sells = sum(1 for row in evaluations if row.get("decision") == "SELL")
+    admitted = sum(1 for row in rows if row.get("event") == SIGNAL_GENERATED)
+    explicit = sum(1 for row in rows if row.get("event") == "SIGNAL_SUPPRESSED_PENDING_ORDER")
+    return {"strategy_buy_decisions": buys, "strategy_sell_decisions": sells,
+            "actionable_decisions": buys + sells, "signals_admitted": admitted,
+            "signals_suppressed_pending_order": explicit,
+            "actionable_decisions_not_admitted": max(0, buys + sells - admitted),
+            "suppression_basis": ("EXPLICIT_CHECKPOINT" if explicit else
+                                  "DERIVED_FROM_DECISION_AND_ADMISSION_COUNTS")}
+
+
+def _latest(rows: list[dict[str, Any]], key: str) -> Any:
+    for row in reversed(rows):
+        if row.get(key) not in (None, ""):
+            return row[key]
+    return None
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -155,7 +242,13 @@ def candidate_signals(*, report: dict[str, Any], scanner: dict[str, Any]) -> lis
     signals: list[str] = []
     strategy = report["strategy"]
     eligible = int(strategy.get("eligible_evaluations", 0))
-    if eligible > 0 and int(strategy.get("signals", 0)) == 0:
+    actionable = int(strategy.get("buy_decisions", 0)) + int(strategy.get("sell_decisions", 0))
+    admitted = int(strategy.get("signals", 0))
+    # Actionable decisions that were never admitted are reported explicitly rather
+    # than being silently dropped from the record.
+    if eligible > 0 and actionable > admitted:
+        signals.append(SIGNALS_SUPPRESSED)
+    elif eligible > 0 and actionable == 0:
         signals.append(ZERO_SIGNALS)
     if int(strategy.get("near_signal_count", 0)) > 0:
         signals.append(NEAR_SIGNAL)
@@ -163,6 +256,11 @@ def candidate_signals(*, report: dict[str, Any], scanner: dict[str, Any]) -> lis
         signals.append(EXECUTION_NOT_EXERCISED)
     if int(report["market"].get("degradation_count", 0)) > 0:
         signals.append(MARKET_DEGRADATIONS)
+    if int(report.get("runtime", {}).get("gaps", {}).get("count", 0)) > 0:
+        signals.append(RUNTIME_GAP_DETECTED)
+    if report.get("runtime", {}).get("reconciliation_state") == "BLOCKED":
+        signals.append(RECONCILIATION_BLOCKED)
+    signals.extend(report.get("round_trip", {}).get("facts", []))
     if not scanner.get("scanner_ran"):
         signals.append(SCANNER_UNAVAILABLE)
     return signals
@@ -194,6 +292,9 @@ def build_report(rows: list[dict[str, Any]], *, identity: dict[str, Any], time_f
         "strategy": {"evaluations": len(evaluations),
                      "eligible_evaluations": sum(1 for row in evaluations if row.get("eligible") is True),
                      "no_signal": events.get(NO_SIGNAL, 0), "signals": events.get(SIGNAL_GENERATED, 0),
+                     "buy_decisions": sum(1 for row in evaluations if row.get("decision") == "BUY"),
+                     "sell_decisions": sum(1 for row in evaluations if row.get("decision") == "SELL"),
+                     "signals_suppressed_pending_order": events.get("SIGNAL_SUPPRESSED_PENDING_ORDER", 0),
                      "reason_distribution": _reason_distribution(rows),
                      "distance_to_signal": _distance_summary(rows),
                      "near_signal_count": _distance_summary(rows)["near_signal_count"],
@@ -221,9 +322,14 @@ def build_report(rows: list[dict[str, Any]], *, identity: dict[str, Any], time_f
                        "errors": len([row for row in rows if row.get("level") in {"ERROR", "CRITICAL"}]),
                        "halts": sum(events.get(name, 0) for name in HALT_EVENTS),
                        "kill_switch_activations": events.get("KILL_SWITCH_TRIGGERED", 0)},
+        # Wall-clock runtime can include periods with no executing process, so the
+        # gaps are reported explicitly rather than being counted as monitoring.
+        "runtime": {"gaps": runtime_gaps(rows)}, "round_trip": round_trip_economics(facts.get("execution_financial_truth")),
+        "signal_admission": signal_admission(rows),
         "scanner": scanner,
         "portfolio": facts.get("portfolio"),
         "wallet": facts.get("wallet"),
+        "execution_financial_truth": facts.get("execution_financial_truth"),
     }
 
 
@@ -249,6 +355,9 @@ def build_checkpoint_summary(rows: list[dict[str, Any]], *, session_id: str, run
             "execution_lifecycle": {name: events.get(name, 0) for name in EXECUTION_EVENTS},
             "execution_exercised": any(events.get(name, 0) > 0 for name in EXECUTION_EVENTS),
             "risk_rejections": {name: events.get(name, 0) for name in REJECTION_EVENTS},
+            "signal_admission": signal_admission(rows),
+            "runtime_gaps": runtime_gaps(rows),
+            "round_trip": round_trip_economics(facts.get("execution_financial_truth")),
             "market_quality_transitions": _quality_transitions(rows),
             "learning_checkpoints": {name: events.get(name, 0) for name in LEARNING_EVENTS},
             "learning": learning,
@@ -271,7 +380,10 @@ def build_handoff(rows: list[dict[str, Any]], *, report: dict[str, Any], result:
             "distance_to_signal": strategy["distance_to_signal"],
             "near_signal_count": strategy["near_signal_count"],
             "regime_distribution": strategy["regime_distribution"],
-            "conclusion": ("NO_ACTIONABLE_SIGNAL" if strategy["signals"] == 0 and strategy["eligible_evaluations"] > 0
+            "conclusion": ("SIGNALS_SUPPRESSED" if strategy["signals"] < strategy.get("buy_decisions", 0)
+                           + strategy.get("sell_decisions", 0)
+                           else "NO_ACTIONABLE_SIGNAL" if strategy["signals"] == 0
+                           and strategy["eligible_evaluations"] > 0
                            else "SIGNALS_OBSERVED" if strategy["signals"] > 0 else "INSUFFICIENT_HISTORY")},
         "execution_observations": {"exercised": execution["exercised"],
                                    "order_intents": execution["order_intent_created"],
@@ -287,7 +399,11 @@ def build_handoff(rows: list[dict[str, Any]], *, report: dict[str, Any], result:
                                  "degradation_count", "spread_bps")},
         "telemetry_observations": {"checkpoints": len(rows), "warnings": report["operations"]["warnings"],
                                    "errors": report["operations"]["errors"],
-                                   "latency": market["latency"]},
+                                   "latency": market["latency"],
+                                   "runtime_gaps": report.get("runtime", {}).get("gaps"),
+                                   "reconciliation_state": report.get("execution_financial_truth", {}) or {}},
+        "signal_admission": report.get("signal_admission", {}),
+        "round_trip": report.get("round_trip", {}),
         "learning_observations": learning,
         "scanner_observations": scanner,
         "financial_truth": {"portfolio": report.get("portfolio"), "wallet": report.get("wallet"),

@@ -33,6 +33,12 @@ STOP_MAX_ORDERS = "MAX_SESSION_ORDERS_REACHED"
 STOP_LOSS_LIMIT = "MAX_SESSION_LOSS_REACHED"
 STOP_KILL_SWITCH = "KILL_SWITCH_ACTIVATED"
 STOP_RUNNER_FAILURE = "EXECUTION_FAILURE"
+STOP_BLOCKED_RECOVERY = "BLOCKED_RECOVERY_UNRESOLVED_ORDER"
+
+# Internal liveness watchdog. Kept short so a stalled process is noticed quickly;
+# a gap larger than the threshold means no execution was happening.
+WATCHDOG_INTERVAL_SECONDS = 5.0
+WATCHDOG_GAP_THRESHOLD_SECONDS = 60.0
 # Operator-actionable notes for blocker names that are not self-explanatory. The
 # gate itself is unchanged; these only describe what the exact blocker means.
 BLOCKER_GUIDANCE: dict[str, str] = {
@@ -114,6 +120,12 @@ class SafeIdleRunner:
         self.running = False
         self.killed = False
         self.observability = MvpObservability(demo=demo)
+        # Read-only wallet observation state. Present on every runner so the read
+        # model has one shape regardless of mode.
+        self.wallet_balances: tuple[Any, ...] = ()
+        self.wallet_status = "UNAVAILABLE"
+        self.wallet_error: str | None = None
+        self.wallet_observed_at: str | None = None
         self.preflight_status = PREFLIGHT_NOT_RUN
         self.preflight_blockers: tuple[str, ...] = ("PRODUCTION_PREFLIGHT_NOT_RUN",)
         self.preflight_warnings: tuple[str, ...] = ()
@@ -149,7 +161,15 @@ class SafeIdleRunner:
         return {"connected": True, "market_quality": "VALID", "accounting_status": "PASS",
                 "risk_status": "NORMAL", "cash_mxn": "50", "equity_mxn": "50", "deployed_mxn": "0",
                 "position": None, "last_signal": "NO_SIGNAL", "orders": 0, "fills": 0,
-                "realized_pnl_mxn": "0", "unrealized_pnl_mxn": "0", "fees_mxn": "0"}
+                "realized_pnl_mxn": "0", "unrealized_pnl_mxn": "0", "fees_mxn": "0",
+                "wallet": {"status": self.wallet_status, "error": self.wallet_error, "read_only": True,
+                           "observed_at": self.wallet_observed_at, "balances": []},
+                "signals": {"admitted": 0, "suppressed_pending_order": 0,
+                            "strategy_buy_decisions": 0, "strategy_sell_decisions": 0},
+                "blocked_recovery": {"blocked": False, "origins": []}}
+
+    def refresh_wallet(self) -> None:
+        """Safe-idle runners own no exchange transport, so there is nothing to read."""
 
 
 class ProductionAutonomousRunner(SafeIdleRunner):
@@ -175,9 +195,15 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         # the runner records the exact profile the decision came from.
         self._strategy_fingerprint = ""
         self._champion_fingerprint: str | None = None
-        self.wallet_balances: tuple[Any, ...] = ()
-        self.wallet_status = "UNAVAILABLE"
-        self.wallet_error: str | None = None
+        # Signal admission accounting: actionable decisions cannot be silently dropped.
+        self._admitted = 0
+        self._suppressed = 0
+        self._blocked_recovery: tuple[str, ...] = ()
+        self._on_blocked: Any = None
+        # Actionable strategy decisions, counted independently of admission so a
+        # suppressed signal can never be silently discarded.
+        self._strategy_buy_decisions = 0
+        self._strategy_sell_decisions = 0
         self.account_balance_contradiction = False
 
     def _execution_event(self, event: str, payload: dict[str, Any]) -> None:
@@ -209,6 +235,7 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         try:
             self.wallet_balances = tuple(self.execution.client.balances())
             self.wallet_status, self.wallet_error = "PASS", None
+            self.wallet_observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             totals = {row.currency: row.total for row in self.wallet_balances}
             portfolio = self.execution.public()
             self.account_balance_contradiction = (
@@ -219,6 +246,10 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         except Exception:
             self.wallet_balances = ()
             self.wallet_status, self.wallet_error = "DEGRADED", "WALLET_READ_UNAVAILABLE"
+
+    def refresh_wallet(self) -> None:
+        """Public GET-only wallet refresh, used before exporting diagnostics."""
+        self._refresh_wallet()
 
     def startup(self) -> dict[str, Any]:
         from autofund.live.client import BitsoProductionLiveClient, LiveCredentials
@@ -328,6 +359,9 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         super().start(config, event)
         self._event = event
         self._strategy_fingerprint = self._champion_fingerprint or ""
+        self._admitted = self._suppressed = 0
+        self._strategy_buy_decisions = self._strategy_sell_decisions = 0
+        self._blocked_recovery = ()
         self.observability.heartbeat(status="RUNNING")
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="autofund-trading-runner", daemon=True)
@@ -389,16 +423,37 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             return
         self._event("STRATEGY_EVALUATED", component="strategy", message=evidence.message, **payload)
         if evidence.decision == DECISION_BUY:
+            self._strategy_buy_decisions += 1
             self.handle_signal("BUY")
         elif evidence.decision == DECISION_SELL:
+            self._strategy_sell_decisions += 1
             self.handle_signal("SELL")
         else:
             self._event("NO_SIGNAL", component="strategy", message=evidence.message, **payload)
 
     def handle_signal(self, side: str) -> None:
-        if not self.running or self.killed or self.execution.unresolved:
+        if not self.running or self.killed:
+            return
+        # An acknowledged order whose outcome is not established must fail closed:
+        # no new financial intent, and the session must stop presenting itself as
+        # normally RUNNING. Market observation and the research scanner continue.
+        blocked = tuple(getattr(self.execution, "blocked", ())) or self.execution.unresolved
+        if blocked:
+            self._suppressed += 1
+            self._event("SIGNAL_SUPPRESSED_PENDING_ORDER", component="execution", level="WARNING",
+                        message=f"{side} not admitted: unresolved order", side=side,
+                        suppressed_signals=self._suppressed,
+                        blocking_origin=blocked[0] if blocked else None,
+                        reason="UNRESOLVED_ORDER_BLOCKS_NEW_INTENTS")
+            self._blocked_recovery = tuple(blocked)
+            if self._on_blocked is not None:
+                try:
+                    self._on_blocked(tuple(blocked))
+                except Exception:
+                    pass
             return
         correlation = uuid4().hex
+        self._admitted += 1
         self._event("SIGNAL_GENERATED", component="strategy", correlation_id=correlation, message=side)
         try:
             if side == "BUY":
@@ -452,7 +507,13 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         return {**super().snapshot(), "cash_mxn": str(row["cash_mxn"]), "equity_mxn": str(equity),
                 "deployed_mxn": str(deployed), "accounting_status": "PASS",
                 "wallet": {"status": self.wallet_status, "error": self.wallet_error,
-                           "read_only": True, "balances": wallet},
+                           "read_only": True, "observed_at": self.wallet_observed_at,
+                           "balances": wallet},
+                "signals": {"admitted": self._admitted, "suppressed_pending_order": self._suppressed,
+                            "strategy_buy_decisions": self._strategy_buy_decisions,
+                            "strategy_sell_decisions": self._strategy_sell_decisions},
+                "blocked_recovery": {"blocked": bool(self._blocked_recovery),
+                                     "origins": list(self._blocked_recovery)},
                 "position": None if inventory == 0 else {"asset": "BTC", "quantity": str(inventory),
                     "average_cost_mxn": str(average_cost), "cost_basis_mxn": str(cost_basis), "mark_mxn": str(mark),
                     "market_value_mxn": str(deployed), "realized_pnl_mxn": str(row["realized_pnl_mxn"]),
@@ -569,6 +630,11 @@ class AutoFundOrchestrator:
         self._scanner_thread: threading.Thread | None = None
         self._scanner_stop = threading.Event()
         self._scanner_interval = 300
+        self._watchdog_thread: threading.Thread | None = None
+        self._watchdog_stop = threading.Event()
+        self._watchdog_tick: float | None = None
+        self._last_watchdog_at: str | None = None
+        self._runtime_gaps: list[dict[str, Any]] = []
         self._session_monotonic: float | None = None
         self._lock = threading.RLock()
         self._checkpoint("APP_BOOT", component="application", message="AutoFund MVP process initialized")
@@ -631,7 +697,12 @@ class AutoFundOrchestrator:
             # The Champion is fixed for the whole session and cannot change mid-session.
             if isinstance(self.runner, ProductionAutonomousRunner):
                 self.runner._champion_fingerprint = self.adaptive.champion.fingerprint
+                # An acknowledged order whose outcome is not established must fail
+                # closed: halt new financial writes while market observation and the
+                # research scanner continue.
+                self.runner._on_blocked = self._on_order_blocked
             self.runner.observability.begin(self.session_id, self.session_started_at)
+            self.start_watchdog()
             self.telemetry = SessionTelemetry(self.artifacts, self.session_id)
             self._checkpoint("SESSION_START_REQUESTED", component="control", message="Operator authorized bounded real session",
                              config={**asdict(config), "authorized_capital_mxn": "50", "max_deployment_mxn": "25", "single_order_cap_mxn": "11"})
@@ -717,6 +788,10 @@ class AutoFundOrchestrator:
             self._checkpoint("SESSION_STOPPED", component="orchestrator", message="Session finalized")
         snap = self.runner.snapshot()
         view = self._session_view()
+        # Refresh the read-only wallet view so the exported snapshot is current,
+        # never a startup read presented as live.
+        self.refresh_wallet()
+        snap = self.runner.snapshot()
         net_pnl = Decimal(str(snap.get("equity_mxn", AUTHORIZED_CAPITAL))) - AUTHORIZED_CAPITAL
         metrics = {"orders": snap.get("orders", 0), "fills": snap.get("fills", 0),
                    "net_pnl_mxn": str(net_pnl), "fees_mxn": snap.get("fees_mxn", "0")}
@@ -741,6 +816,7 @@ class AutoFundOrchestrator:
             learning=learning,
             facts={"metrics": metrics, "portfolio": snap.get("position"),
                    "wallet": snap.get("wallet"), "execution": snap.get("execution"),
+                   "execution_financial_truth": (snap.get("execution") or {}).get("financial_truth"),
                    "initial_equity_mxn": str(AUTHORIZED_CAPITAL),
                    "final_equity_mxn": str(snap.get("equity_mxn", AUTHORIZED_CAPITAL)),
                    "realized_pnl_mxn": str(snap.get("realized_pnl_mxn", "0")),
@@ -748,10 +824,104 @@ class AutoFundOrchestrator:
                    "max_deployment_mxn": str(snap.get("deployed_mxn", "0")),
                    "execution_quality": {}, "halts": 1 if result == "HALTED" else 0})
 
+    def refresh_wallet(self) -> None:
+        """Refresh the read-only wallet view so an export is never a stale snapshot."""
+        refresh = getattr(self.runner, "refresh_wallet", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:
+                pass  # A wallet read failure never affects financial state.
+
+    def _on_order_blocked(self, origins: tuple[str, ...]) -> None:
+        """Fail closed when an order outcome is unresolved.
+
+        The UI must not keep presenting a normally RUNNING session while a REAL
+        order has an unknown financial outcome. Automatic execution is disabled
+        and the application enters HALTED; market observation and the read-only
+        scanner are deliberately unaffected, and no new Production order is
+        possible in this state.
+        """
+        with self._lock:
+            if self.state is not AppState.RUNNING:
+                return
+            self.auto_execution = False
+            self.last_error = "BLOCKED_RECOVERY_UNRESOLVED_ORDER"
+            self._requested_stop = STOP_BLOCKED_RECOVERY
+            self.runner.stop()
+            self._checkpoint("AUTO_HALT_TRIGGERED", component="execution", level="CRITICAL",
+                             message="Acknowledged order outcome unresolved; new financial writes blocked",
+                             origins=list(origins), reconciliation_state="BLOCKED")
+            self._transition(AppState.HALTED)
+            self._finish("HALTED")
+
+    def _watchdog_loop(self) -> None:
+        """Bounded liveness watchdog, independent of HTTP/SSE polling.
+
+        The duration guard previously ran only when a client polled a snapshot, so
+        a suspended or starved process could pass its configured duration without
+        the guard ever being evaluated. This thread detects the gap, reports it and
+        enforces the guard the moment execution resumes. It never trades and never
+        submits anything.
+        """
+        while not self._watchdog_stop.wait(WATCHDOG_INTERVAL_SECONDS):
+            self._watchdog_loop_once()
+
+    def _watchdog_loop_once(self) -> None:
+        """One watchdog tick. Exposed so liveness handling is directly testable."""
+        now = monotonic()
+        last = self._watchdog_tick
+        self._watchdog_tick = now
+        if last is None:
+            return
+        gap = now - last
+        if gap > WATCHDOG_GAP_THRESHOLD_SECONDS:
+            next_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            self._runtime_gaps.append({"last_event_at": self._last_watchdog_at, "next_event_at": next_at,
+                                       "gap_seconds": str(gap)})
+            self._checkpoint("RUNTIME_GAP", component="orchestrator", level="WARNING",
+                             message="No executing process observed; wall time is not monitoring",
+                             gap_seconds=str(gap), last_event_at=self._last_watchdog_at,
+                             next_event_at=next_at)
+        self._last_watchdog_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        self._enforce_duration_guard()
+
+    def _enforce_duration_guard(self) -> None:
+        with self._lock:
+            if self.state is not AppState.RUNNING or self.session_config is None or self._session_monotonic is None:
+                return
+            if monotonic() - self._session_monotonic >= self.session_config.max_session_duration_seconds:
+                self._requested_stop = STOP_MAX_DURATION
+                self.stop(STOP_MAX_DURATION)
+
+    def _monitored_seconds(self) -> int:
+        """Wall elapsed minus detected gaps: time the process actually ran."""
+        view = self._session_view()
+        elapsed = view.get("elapsed_seconds") or 0
+        gaps = sum((Decimal(str(gap["gap_seconds"])) for gap in self._runtime_gaps), Decimal("0"))
+        return max(0, int(Decimal(elapsed) - gaps))
+
     def shutdown(self) -> None:
         """Release the backend publication thread; never changes financial state."""
+        self._stop_watchdog()
         self.runner.observability.close()
         self.stop_scanner()
+
+    def start_watchdog(self) -> None:
+        self._watchdog_tick = monotonic()
+        self._last_watchdog_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        if self._watchdog_thread is not None and self._watchdog_thread.is_alive():
+            return
+        self._watchdog_stop.clear()
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, name="mvp-runtime-watchdog",
+                                                 daemon=True)
+        self._watchdog_thread.start()
+
+    def _stop_watchdog(self) -> None:
+        self._watchdog_stop.set()
+        thread, self._watchdog_thread = self._watchdog_thread, None
+        if thread is not None:
+            thread.join(timeout=2)
 
     # ------------------------------------------------------------- scanner
     def start_scanner(self, scanner: MarketScanner, *, interval_seconds: int | None = None) -> None:
@@ -856,6 +1026,9 @@ class AutoFundOrchestrator:
                     self.stop(STOP_MAX_DURATION)
             rows = list(self.telemetry.rows[-100:]) if self.telemetry else []
             observability = self.runner.observability
+            snapshot_signals = live.get("signals") or {"admitted": 0, "suppressed_pending_order": 0,
+                                                       "strategy_buy_decisions": 0, "strategy_sell_decisions": 0}
+            snapshot_blocked = live.get("blocked_recovery") or {"blocked": False, "origins": []}
             return {"schema_version": "autofund.mvp.v1", "product_version": PRODUCT_VERSION,
                     "demo_mode": self.demo, "app_state": self.state, "mode": "REAL MONEY",
                     "auto_execution": self.auto_execution, "session_id": self.session_id,
@@ -863,6 +1036,11 @@ class AutoFundOrchestrator:
                     "max_deployment_mxn": "25", "single_order_cap_mxn": "11",
                     "session_config": asdict(self.session_config) if self.session_config else None,
                     "session": self._session_view(),
+                    "monitored_seconds": self._monitored_seconds(),
+                    "runtime_gaps": list(self._runtime_gaps),
+                    "signals": snapshot_signals,
+                    "blocked_recovery": snapshot_blocked,
+                    "wallet": live.get("wallet"),
                     "kill_triggered": self.kill_triggered, "last_error": self.last_error,
                     "production_preflight": self.readiness(),
                     # Operator observability, reusing the F4.6 runtime contract.

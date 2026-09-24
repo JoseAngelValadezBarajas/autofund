@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -9,7 +10,7 @@ from time import monotonic
 from typing import Any, TextIO
 from uuid import uuid4
 
-from autofund.decimal_utils import financial
+from autofund.decimal_utils import decimal, financial
 from autofund.exchanges.bitso import parsing
 from autofund.exchanges.bitso.accounting import ConfirmedFillAccounting
 from autofund.exchanges.bitso.models import (
@@ -30,6 +31,12 @@ from .preflight import preflight
 STATES = {"INTENT_CREATED", "PREFLIGHT_PASS", "AWAITING_OPERATOR", "SUBMITTING", "SUBMITTED",
           "ACKNOWLEDGED", "OUTCOME_UNKNOWN", "PARTIALLY_FILLED", "FILLED", "RECONCILED", "HALTED"}
 
+# Bounded, deterministic backoff for the ACK recovery window. Doubling from a
+# small base bounded by a cap keeps the probe count low while still covering
+# exchange trade-visibility lag. These are policy constants, not tuning knobs.
+BACKOFF_BASE_SECONDS = Decimal("1")
+BACKOFF_CAP_SECONDS = Decimal("10")
+
 
 def restore_fill(row: dict[str, object]) -> ExchangeTradeFill:
     maker = row.get("is_maker")
@@ -46,13 +53,19 @@ def restore_fill(row: dict[str, object]) -> ExchangeTradeFill:
 
 class LiveExecution:
     def __init__(self, client: BitsoProductionLiveClient, journal: LiveExecutionJournal,
-                 config: LiveConfig, *, emit: Callable[[str, dict[str, Any]], None] | None = None) -> None:
+                 config: LiveConfig, *, emit: Callable[[str, dict[str, Any]], None] | None = None,
+                 sleep: Callable[[float], None] = time.sleep,
+                 monotonic_clock: Callable[[], float] = monotonic) -> None:
         self.client, self.journal, self.config = client, journal, config
+        self._sleep = sleep
+        self._clock = monotonic_clock
         self.wallet = Wallet()
         self.accounting = ConfirmedFillAccounting(self.wallet)
         self.intents: dict[str, dict[str, Any]] = {}
         self.states: dict[str, str] = {}
         self.state_metadata: dict[str, dict[str, object]] = {}
+        # Last bounded-reconciliation result per origin (in-memory diagnostics only).
+        self.reconciliation_outcomes: dict[str, dict[str, Any]] = {}
         self.submitting: set[str] = set()
         self.oids: dict[str, str] = {}
         self._last_orderbook_sequence: int | None = None
@@ -137,6 +150,18 @@ class LiveExecution:
     def unresolved(self) -> tuple[str, ...]:
         return tuple(origin for origin, state in self.states.items()
                      if state != "RECONCILED" and not (state == "HALTED" and origin not in self.submitting))
+
+    @property
+    def blocked(self) -> tuple[str, ...]:
+        """Origins whose financial outcome is not established.
+
+        Any entry here means new writes must not be admitted until a GET-only
+        recovery resolves it. A blocked order never authorises another POST.
+        """
+        return tuple(origin for origin, state in self.states.items()
+                     if state in {"ACKNOWLEDGED", "SUBMITTED", "OUTCOME_UNKNOWN", "PARTIALLY_FILLED"}
+                     or (state == "HALTED" and origin in self.submitting
+                         and self.state_metadata.get(origin, {}).get("reconciliation_state") == "BLOCKED"))
 
     def state(self, origin: str, state: str, **metadata: object) -> None:
         data = {"origin_id": origin, "state": state, **metadata}
@@ -345,64 +370,178 @@ class LiveExecution:
                 self.state(known, "HALTED", reason=reason)
 
     @financial
-    def _recover_one(self, origin: str) -> None:
-        for _ in range(self.config.reconciliation_attempts):
+    def reconcile_outcome(self, origin: str, *, deadline: float | None = None) -> str:
+        """Bounded GET-only reconciliation after an acknowledged order.
+
+        Returns one deterministic terminal outcome:
+
+        - ``EXECUTED_RECOVERED``    the order is fully filled and committed
+        - ``PARTIALLY_FILLED_RECOVERED`` terminal remote evidence with partial fills
+        - ``OPEN_ORDER``            the exchange still reports it live at deadline
+        - ``CANCELLED`` / ``REJECTED`` proven by remote state without fills
+        - ``CONTRADICTORY_REMOTE_STATE`` remote evidence contradicts local state
+        - ``UNKNOWN``               no conclusive evidence within the window
+
+        The exchange may acknowledge an order before its trades become visible, so
+        a single immediate lookup is not sufficient evidence. This polls with a
+        deterministic backoff for at most ``reconciliation_window_seconds`` and
+        then stops. It never submits anything: the transport rejects any non-GET
+        here, and a permit is never created.
+        """
+        started = self._monotonic()
+        window = float(decimal(self.config.reconciliation_window_seconds,
+                               "reconciliation_window_seconds"))
+        limit = deadline if deadline is not None else started + window
+        attempt = 0
+        last: tuple[tuple[RemoteOrder, ...], tuple[ExchangeTradeFill, ...]] = ((), ())
+        while True:
+            attempt += 1
+            # Already reconciled: recovery is a clean no-op. Re-entering the state
+            # machine would be both pointless and unsafe.
+            if self.states.get(origin) == "RECONCILED":
+                self._record_outcome(origin, attempt, "ALREADY_RECONCILED")
+                return "ALREADY_RECONCILED"
             orders: tuple[RemoteOrder, ...] = ()
+            fills: tuple[ExchangeTradeFill, ...] = ()
             try:
                 orders = self.client.lookup_order(origin)
             except LiveError:
-                pass  # Filled orders may be absent; always query trade evidence.
+                # Two distinct real cases reach here and both are expected:
+                #  - a fully executed market order is no longer served by the
+                #    order lookup endpoint (Production returns 0312 for completed
+                #    market orders, verified against the successful SELL too);
+                #  - the order is still propagating.
+                # Trade evidence is the authoritative source and is always queried.
+                orders = ()
             for order in orders:
                 expected_side = Side(str(self.intents[origin].get("side", "buy")).upper())
                 if order.origin_id != origin or order.book != "btc_mxn" or order.side is not expected_side:
-                    raise LiveError("UNRELATED_ORDER_LOOKUP_REJECTED")
+                    self._record_outcome(origin, attempt, "CONTRADICTORY_REMOTE_STATE")
+                    self._emit_reconciliation(origin, attempt, 0, "CONTRADICTORY_REMOTE_STATE")
+                    return "CONTRADICTORY_REMOTE_STATE"
+                if order.state is OrderState.REJECTED:
+                    self._record_outcome(origin, attempt, "REJECTED")
+                    self._emit_reconciliation(origin, attempt, 0, "REJECTED")
+                    return "REJECTED"
                 self.state(origin, "ACKNOWLEDGED", oid=order.oid)
             try:
                 fills = self.client.order_trades(origin)
             except LiveError:
+                fills = ()
+            committed = self._commit_fills(origin, fills)
+            last = (orders, fills)
+            if committed:
+                self._emit_reconciliation(origin, attempt, committed, "FILLS_OBSERVED")
+            outcome = self._classify_outcome(origin, orders, fills)
+            if outcome is not None:
+                self._record_outcome(origin, attempt, outcome)
+                return outcome
+            remaining = limit - self._monotonic()
+            if remaining <= 0:
+                break
+            # Deterministic bounded backoff: 1s, 2s, 4s, capped at 10s.
+            self._sleep(min(float(BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))), float(BACKOFF_CAP_SECONDS), remaining))
+        orders, fills = last
+        outcome = "OPEN_ORDER" if any(order.state in {OrderState.OPEN, OrderState.PARTIALLY_FILLED,
+                                                     OrderState.ACKNOWLEDGED, OrderState.SUBMITTED}
+                                     for order in orders) else "UNKNOWN"
+        self.reconciliation_outcomes[origin] = {"attempts": attempt, "outcome": outcome,
+                                                "window_seconds": str(self.config.reconciliation_window_seconds)}
+        self._emit_reconciliation(origin, attempt, 0, outcome)
+        return outcome
+
+    def _record_outcome(self, origin: str, attempts: int, outcome: str) -> None:
+        """In-memory diagnostics only; never a durable state transition."""
+        self.reconciliation_outcomes[origin] = {"attempts": attempts, "outcome": outcome,
+                                                "window_seconds": str(self.config.reconciliation_window_seconds)}
+
+    def _monotonic(self) -> float:
+        return self._clock()
+
+    def _commit_fills(self, origin: str, fills: tuple[ExchangeTradeFill, ...]) -> int:
+        """Commit new fills once, idempotently. Returns the number committed."""
+        committed = 0
+        for fill in fills:
+            self._validate_fill(origin, fill)
+            if fill.trade_id in self.accounting.processed_fill_ids:
                 continue
-            for fill in fills:
-                self._validate_fill(origin, fill)
-                if fill.trade_id in self.accounting.processed_fill_ids:
-                    continue
-                # Validate the whole F0 application before committing. Recovery
-                # uses the same primitive and committed fills after a crash.
-                candidate = Wallet()
-                candidate.deposit(self.config.allocated_capital)
-                probe = ConfirmedFillAccounting(candidate)
-                for previous in self.accounting.processed_fill_ids.values():
-                    probe.apply(previous)
-                probe.apply(fill)
-                self.journal.append("LIVE_FILL", {"origin_id": origin, "fill": fill})
-                self.accounting.apply(fill)
-                self.emit("FILL_RECOVERED", origin_id=origin, trade_id=fill.trade_id,
-                          oid=fill.exchange_order_id, side=fill.side.value,
-                          major_quantity=fill.major_quantity, minor_value=fill.minor_value,
-                          confirmed_fee=fill.confirmed_fee, fee_currency=fill.fee_currency)
-                self.state(origin, "PARTIALLY_FILLED", oid=fill.exchange_order_id)
-            own = [x for x in self.accounting.processed_fill_ids.values() if x.exchange_order_id == self.oids.get(origin)]
-            expected_side = Side(str(self.intents[origin].get("side", "buy")).upper())
-            if expected_side is Side.BUY:
-                complete_budget = sum((x.minor_value for x in own), Decimal("0")) == Decimal(str(self.intents[origin]["minor_budget"]))
-            else:
-                complete_budget = sum((x.major_quantity for x in own), Decimal("0")) == Decimal(str(self.intents[origin]["major_quantity"]))
-            cancelled = any(order.state is OrderState.CANCELLED for order in orders)
-            completed_with_fills = bool(own) and any(order.state is OrderState.COMPLETED for order in orders)
-            if complete_budget or cancelled or completed_with_fills:
-                if complete_budget:
-                    self.state(origin, "FILLED")
-                self._balance_evidence(origin, "AFTER")
-                self.wallet.assert_invariants()
-                self.state(origin, "RECONCILED", provenance=fingerprint({"intent": self.intents[origin],
-                           "fills": own, "ledger": self.wallet.ledger}),
-                           terminal_evidence="BUDGET_FULLY_FILLED" if complete_budget else "REMOTE_CANCELLED" if cancelled else "REMOTE_COMPLETED_WITH_CONFIRMED_FILLS",
-                           balance_reconciliation="PRIVATE_EVIDENCE_ONLY_EXTERNAL_ACTIVITY_NOT_ATTRIBUTED")
-                self.emit("ORDER_RECOVERED", origin_id=origin, oid=self.oids.get(origin),
-                          fills=len(own), state="RECONCILED")
-                self.emit("POSITION_RECOVERED", origin_id=origin,
-                          inventory_btc=self.public()["inventory_btc"], cash_mxn=self.public()["cash_mxn"])
-                return
-        self.state(origin, "HALTED", reason="HALTED_UNCERTAIN_ORDER")
+            candidate = Wallet()
+            candidate.deposit(self.config.allocated_capital)
+            probe = ConfirmedFillAccounting(candidate)
+            for previous in self.accounting.processed_fill_ids.values():
+                probe.apply(previous)
+            probe.apply(fill)
+            self.journal.append("LIVE_FILL", {"origin_id": origin, "fill": fill})
+            self.accounting.apply(fill)
+            committed += 1
+            self.emit("FILL_RECOVERED", origin_id=origin, trade_id=fill.trade_id,
+                      oid=fill.exchange_order_id, side=fill.side.value,
+                      major_quantity=fill.major_quantity, minor_value=fill.minor_value,
+                      confirmed_fee=fill.confirmed_fee, fee_currency=fill.fee_currency)
+            self.state(origin, "PARTIALLY_FILLED", oid=fill.exchange_order_id)
+        return committed
+
+    def _classify_outcome(self, origin: str, orders: tuple[RemoteOrder, ...],
+                          fills: tuple[ExchangeTradeFill, ...]) -> str | None:
+        """Terminal classification, or None when more evidence is needed."""
+        own = [x for x in self.accounting.processed_fill_ids.values()
+               if x.exchange_order_id == self.oids.get(origin)]
+        expected_side = Side(str(self.intents[origin].get("side", "buy")).upper())
+        if expected_side is Side.BUY:
+            complete = sum((x.minor_value for x in own), Decimal("0")) == Decimal(str(self.intents[origin]["minor_budget"]))
+        else:
+            complete = sum((x.major_quantity for x in own), Decimal("0")) == Decimal(str(self.intents[origin]["major_quantity"]))
+        cancelled = any(order.state is OrderState.CANCELLED for order in orders)
+        remote_terminal = any(order.state is OrderState.COMPLETED for order in orders)
+        # A market BUY commits the requested budget; a market SELL commits the
+        # requested quantity. Either is complete only with matching fill evidence.
+        if complete:
+            self._finalize_reconciled(origin, own, "BUDGET_FULLY_FILLED")
+            return "EXECUTED_RECOVERED"
+        # Cancellation is authoritative terminal evidence. Any fills already
+        # observed are real and stand; a cancelled order never fills further.
+        if cancelled:
+            self._finalize_reconciled(origin, own, "REMOTE_CANCELLED")
+            return "PARTIALLY_FILLED_RECOVERED" if own else "CANCELLED"
+        if remote_terminal and own:
+            self._finalize_reconciled(origin, own, "REMOTE_COMPLETED_WITH_CONFIRMED_FILLS")
+            return "PARTIALLY_FILLED_RECOVERED"
+        return None
+
+    def _finalize_reconciled(self, origin: str, own: list[ExchangeTradeFill], evidence: str) -> None:
+        if own:
+            self.state(origin, "FILLED")
+        self._balance_evidence(origin, "AFTER")
+        self.wallet.assert_invariants()
+        self.state(origin, "RECONCILED",
+                   provenance=fingerprint({"intent": self.intents[origin], "fills": own,
+                                           "ledger": self.wallet.ledger}),
+                   terminal_evidence=evidence,
+                   balance_reconciliation="PRIVATE_EVIDENCE_ONLY_EXTERNAL_ACTIVITY_NOT_ATTRIBUTED")
+        self.emit("ORDER_RECOVERED", origin_id=origin, oid=self.oids.get(origin),
+                  fills=len(own), state="RECONCILED")
+        self.emit("POSITION_RECOVERED", origin_id=origin,
+                  inventory_btc=self.public()["inventory_btc"], cash_mxn=self.public()["cash_mxn"])
+
+    def _emit_reconciliation(self, origin: str, attempts: int, fills: int, outcome: str) -> None:
+        self.emit("RECONCILIATION_PROBE", origin_id=origin, attempts=attempts,
+                  fills_committed=fills, outcome=outcome,
+                  window_seconds=str(self.config.reconciliation_window_seconds))
+
+    def _recover_one(self, origin: str) -> None:
+        outcome = self.reconcile_outcome(origin)
+        if outcome in {"EXECUTED_RECOVERED", "PARTIALLY_FILLED_RECOVERED", "CANCELLED"}:
+            return
+        if outcome == "REJECTED":
+            self.state(origin, "HALTED", reason="REMOTE_REJECTED_NO_FILLS")
+            return
+        if outcome == "CONTRADICTORY_REMOTE_STATE":
+            self.state(origin, "HALTED", reason="CONTRADICTORY_REMOTE_STATE")
+            return
+        # OPEN_ORDER or UNKNOWN: the outcome is not established. Fail closed and
+        # never retry the POST.
+        self.state(origin, "HALTED", reason="HALTED_UNCERTAIN_ORDER", reconciliation_state="BLOCKED",
+                   reconciliation_outcome=outcome)
 
     @financial
     def public(self) -> dict[str, Any]:
