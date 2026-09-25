@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2.1"
+PRODUCT_VERSION = "AutoFund MVP 0.2.2"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1338,11 +1338,28 @@ class AutoFundOrchestrator:
         The champion's own economic verdict is computed here so an operator can see
         *why* its BUYs are refused at the real fee, rather than inferring it.
         """
+        from .challenger_research import CONFIG_SETS, SELECTION_RULE
         from .economics import DEFAULT_POLICY
-        from .profile_library import PROFILE_BY_ID, PROFILE_REGISTRY
+        from .profile_library import (
+            EVALUATORS,
+            FROZEN_PROFILES,
+            PROFILE_BY_ID,
+            PROFILE_REGISTRY,
+            RISK_ADJUSTED_CHALLENGERS,
+        )
         from .profiles import PROMOTION, classify_market
         from .research import SELECTOR_CONTRACT_VERSION
         from .viability import minimum_viable_gross_edge_bps
+
+        # Profiles that declare an invalidation price and a holding limit. Read from each
+        # profile's own explicit constant rather than probed with a synthetic proposal: a
+        # probe with empty candles returns an early no-signal proposal that declares
+        # nothing, which would report a boundary-bounded profile as boundary-less.
+        RISK_BOUNDED_PROFILE_IDS = {
+            definition.profile_id for definition in RISK_ADJUSTED_CHALLENGERS
+            if getattr(EVALUATORS.get(definition.evaluator), "DECLARES_RISK_BOUNDARY",
+                       False)
+        }
 
         runner = self.runner
         taker_fee = getattr(runner, "_taker_fee_rate", Decimal("0"))
@@ -1394,6 +1411,27 @@ class AutoFundOrchestrator:
                         for item in (self._scanner.candidates if self._scanner else ())],
             "shadow": list(self._scanner.shadow.values()) if self._scanner is not None else [],
             "profile_by_id": sorted(PROFILE_BY_ID),
+            # Research generation (MVP 0.2.2). The two sets are reported separately so a
+            # reader can see which profiles are frozen evidence and which are live
+            # challengers, and cannot mistake a new challenger for validated work.
+            "frozen_profiles": sorted(d.profile_id for d in FROZEN_PROFILES),
+            "risk_adjusted_challengers": [
+                {**d.public(), "markets_certified": sorted(d.markets),
+                 "risk_adjusted_metrics": True,
+                 "declares_invalidation": d.profile_id in RISK_BOUNDED_PROFILE_IDS,
+                 "lifecycle": ("ACTIVE_PRODUCTION" if d.markets == frozenset({"btc_mxn"})
+                               else "RESEARCH")}
+                for d in RISK_ADJUSTED_CHALLENGERS],
+            "risk_adjusted_research": {
+                "selection_rule": list(SELECTION_RULE),
+                "configuration_sets": {key: len(value)
+                                       for key, value in CONFIG_SETS.items()},
+                "mae_mfe_implemented": True,
+                "markets_pooled": False,
+                "holdout_frozen_before_selection": True,
+                "drawdown_policy_changed": False,
+                "capital_limits_changed": False,
+            },
         }
 
     def readiness(self) -> dict[str, Any]:

@@ -4,7 +4,7 @@ import {MvpApp} from './MvpApp';
 
 class Events {addEventListener(){} close(){}}
 
-const stopped:any={product_version:'AutoFund MVP 0.1',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+const stopped:any={product_version:'AutoFund MVP 0.2.2',demo_mode:true,app_state:'STOPPED',auto_execution:false,
  session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
  risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
  realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'mean-reversion-safe',strategy_id:'mean_reversion',
@@ -44,7 +44,31 @@ const research:any={research_version:'autofund.production-market-selector.v1',
  shadow:[{market:'BTC/MXN',evaluations:156,signals:2,shadow_trades:1,gross_pnl_mxn:'0.89',
   fees_mxn:'0.09',net_pnl_mxn:'0.80',max_drawdown_mxn:'0',economic_reject_rate:'0.5',
   data_source:'CAPTURED_MARKET_DATA',evaluated:true,profiles:[{profile_id:'trend-continuation-v1'}]}],
- profile_by_id:['mean-reversion-safe-v1','trend-continuation-v1','volatility-mean-reversion-v1']};
+ profile_by_id:['mean-reversion-safe-v1','trend-continuation-v1','volatility-mean-reversion-v1'],
+ frozen_profiles:['mean-reversion-safe-v1','trend-continuation-v1',
+  'volatility-mean-reversion-v1'],
+ risk_adjusted_challengers:[
+  {profile_id:'volatility-mean-reversion-v2',strategy_id:'volatility_mean_reversion',
+   version:'0.2',parameters:{max_holding_bars:'240'},
+   target_model:{version:'autofund.volatility-aware-target.v1',atr_multiple:'2.0',
+   floor_bps:'250',cap_bps:'1200'},fingerprint:'1'.repeat(64),strategy_fingerprint:'2'.repeat(64),
+   profile_contract_version:'autofund.strategy-profile.v2',markets:[],
+   evaluator:'VolatilityMeanReversionV2',description:'risk-bounded mean reversion',
+   markets_certified:[],lifecycle:'RESEARCH',
+   risk_adjusted_metrics:true,declares_invalidation:true},
+  {profile_id:'range-expansion-v1',strategy_id:'range_expansion',version:'0.1',
+   parameters:{max_holding_bars:'180'},
+   target_model:{version:'autofund.volatility-aware-target.v1',atr_multiple:'2.5',
+   floor_bps:'300',cap_bps:'1800'},fingerprint:'3'.repeat(64),strategy_fingerprint:'4'.repeat(64),
+   profile_contract_version:'autofund.strategy-profile.v2',markets:[],
+   evaluator:'RangeExpansionV1',description:'confirmed range expansion',
+   markets_certified:[],lifecycle:'RESEARCH',
+   risk_adjusted_metrics:true,declares_invalidation:true}],
+ risk_adjusted_research:{selection_rule:['risk_gates_satisfied',
+  'mae_to_reward_ratio_ascending','effective_drawdown_ascending','net_pnl_descending'],
+  configuration_sets:{'volatility-mean-reversion-v2':4,'range-expansion-v1':4},
+  mae_mfe_implemented:true,markets_pooled:false,holdout_frozen_before_selection:true,
+  drawdown_policy_changed:false,capital_limits_changed:false}};
 
 beforeEach(()=>{vi.stubGlobal('EventSource',Events);vi.stubGlobal('fetch',vi.fn().mockResolvedValue({json:async()=>({control_token:'token'})}))});
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
@@ -115,4 +139,47 @@ test('missing research evidence is stated rather than fabricated',()=>{
  openProfiles();
  expect(screen.getByText('Strategy research')).toBeTruthy();
  expect(screen.getByText(/No strategy research evidence published yet/)).toBeTruthy();
+});
+
+test('risk-adjusted challengers are shown with their declared risk boundary',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Risk-adjusted challengers')).toBeTruthy();
+ for(const id of ['volatility-mean-reversion-v2','range-expansion-v1'])
+   expect(document.querySelector(`[data-challenger="${id}"]`)).toBeTruthy();
+ // v1 is deliberately NOT listed among the risk-bounded challengers: it declares no
+ // boundary, and showing it here would imply a risk claim it does not make.
+ expect(document.querySelector('[data-challenger="volatility-mean-reversion-v1"]')).toBeNull();
+});
+
+test('a challenger without a declared boundary is labelled rather than implied safe',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const rows=document.querySelectorAll('[data-challenger]');
+ expect(rows.length).toBe(2);
+ for(const row of Array.from(rows))
+   expect(row.getAttribute('data-declares-invalidation')).toBe('true');
+});
+
+test('the research page reports MAE/MFE and that markets are not pooled',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-mae-mfe="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-pooled="false"]')).toBeTruthy();
+});
+
+test('the selection rule is shown and is risk-first',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText(/risk_gates_satisfied/)).toBeTruthy();
+ const shown=screen.getByText(/risk_gates_satisfied/).textContent??'';
+ expect(shown.indexOf('risk_gates_satisfied'))
+   .toBeLessThan(shown.indexOf('net_pnl_descending'));
+});
+
+test('the research page states that policy and capital limits are unchanged',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-policy-changed="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-capital-changed="false"]')).toBeTruthy();
 });

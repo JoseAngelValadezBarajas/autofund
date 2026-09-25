@@ -51,6 +51,9 @@ __all__ = [
     "DEFAULT_TARGET_MODEL",
     "ENTRY_CONDITION_NOT_MET",
     "EXIT_CONDITION_NOT_MET",
+    "EXIT_INVALIDATED",
+    "EXIT_TARGET_REACHED",
+    "EXIT_TIME_STOP",
     "INCOMPATIBLE",
     "INSUFFICIENT_EVIDENCE",
     "NOT_VIABLE",
@@ -136,6 +139,13 @@ SIGNAL_BUY = "SIGNAL_BUY"
 SIGNAL_SELL = "SIGNAL_SELL"
 TARGET_BELOW_FRICTION = "TARGET_BELOW_FRICTION"
 NO_VIABLE_OPPORTUNITY = "NO_VIABLE_OPPORTUNITY"
+
+# Exit vocabulary (MVP 0.2.2). Every exit is attributed to exactly one cause, because
+# collapsing them into a single SELL makes it impossible to tell a profit target from a
+# stop: they are opposite findings that a bare P&L number cannot separate.
+EXIT_TARGET_REACHED = "TARGET_REACHED"
+EXIT_INVALIDATED = "STRATEGY_INVALIDATED"
+EXIT_TIME_STOP = "TIME_STOP"
 
 
 class ProfileError(ValueError):
@@ -293,6 +303,38 @@ class StrategyProposal:
     closed_candle_count: int = 0
     position_open: bool = False
 
+    # ---- Risk boundary, known when the position is opened (MVP 0.2.2) ----
+    # A challenger must state where its thesis is wrong *before* entering, not discover
+    # it from a drawdown. `ZERO` means the profile declares no invalidation price and
+    # relies only on its target and time limit; that is permitted but is reported as
+    # such, so a profile with no risk boundary cannot be mistaken for one that has one.
+    invalidation_price_mxn: Decimal = ZERO
+    invalidation_distance_bps: Decimal = ZERO
+    max_holding_bars: int = 0
+
+    @property
+    def declares_invalidation(self) -> bool:
+        return self.invalidation_price_mxn > ZERO
+
+    @property
+    def declares_time_stop(self) -> bool:
+        return self.max_holding_bars > 0
+
+    @property
+    def declared_reward_risk_ratio(self) -> Decimal | None:
+        """Reward per unit of declared risk at entry. None when no boundary is declared.
+
+        Computed from the proposal's own numbers, so it is available before the trade is
+        taken and cannot be back-filled from what actually happened.
+        """
+        if not self.declares_invalidation or self.entry_reference_mxn <= ZERO:
+            return None
+        risk = self.entry_reference_mxn - self.invalidation_price_mxn
+        if risk <= ZERO:
+            return None
+        reward = self.expected_exit_reference_mxn - self.entry_reference_mxn
+        return reward / risk
+
     @property
     def actionable(self) -> bool:
         return self.decision in (DECISION_BUY, DECISION_SELL)
@@ -317,7 +359,14 @@ class StrategyProposal:
                 "confidence_evidence": dict(self.confidence_evidence),
                 "features": self.features.telemetry(),
                 "closed_candles": self.closed_candle_count,
-                "position_open": self.position_open, "promotion": PROMOTION}
+                "position_open": self.position_open, "promotion": PROMOTION,
+                "invalidation_price_mxn": str(self.invalidation_price_mxn),
+                "invalidation_distance_bps": str(self.invalidation_distance_bps),
+                "max_holding_bars": self.max_holding_bars,
+                "declares_invalidation": self.declares_invalidation,
+                "declares_time_stop": self.declares_time_stop,
+                "declared_reward_risk_ratio": (None if self.declared_reward_risk_ratio is None
+                                               else str(self.declared_reward_risk_ratio))}
 
 
 PROPOSAL_MESSAGES: dict[str, str] = {
@@ -336,7 +385,8 @@ class StrategyEvaluator(Protocol):
     """A profile evaluates a past-only context into a proposal."""
 
     def propose(self, *, candles: Sequence[Candle], quantity: Decimal = ...,
-                cost_basis_mxn: Decimal = ..., market: str = ...) -> StrategyProposal: ...
+                cost_basis_mxn: Decimal = ..., market: str = ...,
+                entry_price_mxn: Decimal = ...) -> StrategyProposal: ...
 
 
 @dataclass(frozen=True, slots=True)

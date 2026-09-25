@@ -23,6 +23,10 @@ export interface ResearchProfile {
   markets_certified:string[]; lifecycle:string;
 }
 
+export interface RiskAdjustedProfile extends ResearchProfile {
+  risk_adjusted_metrics:boolean; declares_invalidation:boolean;
+}
+
 export interface StrategyResearchView {
   research_version:string;
   promotion:string;
@@ -37,6 +41,13 @@ export interface StrategyResearchView {
     lifecycle:string}[];
   shadow:Record<string,unknown>[];
   profile_by_id:string[];
+  frozen_profiles?:string[];
+  risk_adjusted_challengers?:RiskAdjustedProfile[];
+  risk_adjusted_research?:{
+    selection_rule:string[]; configuration_sets:Record<string,number>;
+    mae_mfe_implemented:boolean; markets_pooled:boolean;
+    holdout_frozen_before_selection:boolean; drawdown_policy_changed:boolean;
+    capital_limits_changed:boolean};
 }
 
 /** Shadow rows carry whichever fields the pipeline produced; read them defensively. */
@@ -143,6 +154,59 @@ function MarketTable({research}:{research:StrategyResearchView}){
   </>;
 }
 
+function RiskAdjustedPanel({research}:{research:StrategyResearchView}){
+  const challengers=research.risk_adjusted_challengers??[];
+  const meta=research.risk_adjusted_research;
+  if(!challengers.length||!meta)return null;
+  return <>
+    <h3>Risk-adjusted challengers</h3>
+    <p>Challengers added after the corrected drawdown measurement. Each declares where its
+      thesis is invalidated <b>when the position opens</b>, so risk is decided before it is
+      taken rather than discovered from a drawdown. A profile with no declared boundary is
+      shown as such: it makes no risk claim at all, and must not be read as risk-bounded.</p>
+    <div className="table"><table>
+      <thead><tr><th>Profile</th><th>Version</th><th>Generation</th>
+        <th>Declares boundary</th><th>Declares time stop</th><th>Target floor (bps)</th>
+        <th>Markets certified</th><th>Fingerprint</th></tr></thead>
+      <tbody>{challengers.map(profile=><tr key={profile.profile_id}
+        data-challenger={profile.profile_id}
+        data-declares-invalidation={profile.declares_invalidation}>
+        <td>{profile.profile_id}</td>
+        <td>{profile.version}</td>
+        <td>RISK_ADJUSTED</td>
+        <td><span data-boundary={profile.declares_invalidation}>
+          {profile.declares_invalidation?'YES':'NO'}</span></td>
+        <td>{profile.parameters?.max_holding_bars??'—'}</td>
+        <td>{profile.target_model.floor_bps}</td>
+        <td>{profile.markets_certified?.length?profile.markets_certified.join(', '):'NONE'}</td>
+        <td className="fingerprint" title={profile.fingerprint}>{profile.fingerprint}</td>
+      </tr>)}</tbody></table></div>
+    <h3>Research discipline</h3>
+    <div className="table"><table><tbody>
+      <tr><th>MAE / MFE implemented</th>
+        <td data-mae-mfe={meta.mae_mfe_implemented}>
+          {meta.mae_mfe_implemented?'YES':'NO'}</td></tr>
+      <tr><th>Markets pooled</th>
+        <td data-pooled={meta.markets_pooled}>{meta.markets_pooled?'YES':'NO'}</td></tr>
+      <tr><th>Holdout frozen before selection</th>
+        <td>{meta.holdout_frozen_before_selection?'YES':'NO'}</td></tr>
+      <tr><th>Configurations per challenger</th>
+        <td>{Object.entries(meta.configuration_sets??{})
+          .map(([id,count])=>`${id}: ${count}`).join(' · ')}</td></tr>
+      <tr><th>Selection rule</th><td>{(meta.selection_rule??[]).join(' → ')}</td></tr>
+      <tr><th>Drawdown policy changed</th>
+        <td data-policy-changed={meta.drawdown_policy_changed}>
+          {meta.drawdown_policy_changed?'YES':'NO'}</td></tr>
+      <tr><th>Capital limits changed</th>
+        <td data-capital-changed={meta.capital_limits_changed}>
+          {meta.capital_limits_changed?'YES':'NO'}</td></tr>
+    </tbody></table></div>
+    <p>The selection rule is shown because it is the thing that makes the search honest: risk
+      gates rank ahead of P&amp;L, so a configuration cannot win by earning more while risking
+      more. Every tested configuration is retained, not only the winner.</p>
+  </>;
+}
+
 export function StrategyResearchPage({research}:
   {research:StrategyResearchView|undefined|null}){
   if(!research)return <article>
@@ -175,6 +239,7 @@ export function StrategyResearchPage({research}:
 
     <ChampionViability research={research}/>
     <ProfileTable research={research}/>
+    <RiskAdjustedPanel research={research}/>
     <ShadowTable rows={research.shadow}/>
     <MarketTable research={research}/>
 

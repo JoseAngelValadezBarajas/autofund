@@ -41,9 +41,9 @@ from .execution_model import (
     TOP_OF_BOOK,
     ExecutionError,
     ExecutionObservation,
+    FillResult,
     RoundTripEconomics,
     execution_price_for_buy,
-    execution_price_for_sell,
     model_buy,
     model_sell,
 )
@@ -51,7 +51,17 @@ from .profiles import (
     COMPATIBLE,
     DECISION_BUY,
     DECISION_SELL,
+    EXIT_INVALIDATED,
+    EXIT_TARGET_REACHED,
+    EXIT_TIME_STOP,
+    SIGNAL_SELL,
     StrategyProposal,
+)
+from .risk_metrics import (
+    RiskAdjustedSummary,
+    TradeRiskPath,
+    percentiles,
+    summarise_risk_paths,
 )
 
 EXECUTABLE_REPLAY_VERSION = "autofund.executable-replay.v1"
@@ -59,6 +69,32 @@ EXECUTABLE_REPLAY_VERSION = "autofund.executable-replay.v1"
 DEFAULT_FILL_DELAY_BARS = 1
 DEFAULT_MIN_ROUND_TRIPS = 5
 DEFAULT_MIN_EVALUATIONS = 30
+
+# Risk-adjusted entry gate (MVP 0.2.2, spec section 9).
+# An opportunity whose declared downside to invalidation is disproportionate to its
+# declared reward is refused *before* a shadow position is opened, rather than being
+# discovered as a large drawdown after the fact.
+#
+# Two thresholds, and neither is invented here:
+#
+# * `MAX_SINGLE_TRADE_RISK_MXN` is the *existing* risk policy bound (the same 0.50 MXN
+#   that `DRAWDOWN_WITHIN_POLICY` already enforces on a single trade). The gate reuses it
+#   so that a challenger has to satisfy the policy that already exists rather than a
+#   number chosen to make challengers pass.
+# * `MINIMUM_REWARD_RISK_RATIO` is the shape requirement: declared reward must not be
+#   smaller than declared risk. It is not calibrated to make anything pass -- at the
+#   confirmed ~173 bps round-trip friction it implies `target - invalidation >= 2 x
+#   friction` in bps, which is a genuinely demanding structural condition and the honest
+#   reason a tiny-reversion strategy cannot qualify.
+#
+# A profile that declares no invalidation price is not rejected here: there is no stated
+# boundary to reason about, and inventing one would substitute this function's judgement
+# for the profile's. It is reported via `boundary_declared=False` instead.
+MINIMUM_REWARD_RISK_RATIO = Decimal("1.0")
+MAX_SINGLE_TRADE_RISK_MXN = Decimal("0.50")
+RISK_ADJUSTED_ENTRY_REJECT = "RISK_ADJUSTED_ENTRY_REJECT"
+
+MINUTES_PER_BAR = 60
 
 # An entry separated from the previous exit by at least this many bars counts as a
 # distinct episode rather than a continuation of the same move.
@@ -130,6 +166,15 @@ class ExecutableRoundTrip:
     exit_reason: str
     episode: int
     excursion: Excursion | None = None
+    risk_path: TradeRiskPath | None = None
+
+    @property
+    def mae_mxn(self) -> Decimal:
+        return self.risk_path.mae_mxn if self.risk_path is not None else ZERO
+
+    @property
+    def mfe_mxn(self) -> Decimal:
+        return self.risk_path.mfe_mxn if self.risk_path is not None else ZERO
 
     @property
     def net_pnl_mxn(self) -> Decimal:
@@ -178,6 +223,7 @@ class ExecutableRoundTrip:
                 "net_edge_bps": str(self.net_edge_bps),
                 "evidence_quality": self.evidence_quality,
                 "excursion": None if self.excursion is None else self.excursion.telemetry(),
+                "risk_path": None if self.risk_path is None else self.risk_path.telemetry(),
                 **self.economics.telemetry()}
 
 
@@ -203,6 +249,8 @@ class ExecutableReplayResult:
     dataset_fingerprint: str
     fill_delay_bars: int
     distinct_episodes: int
+    risk_adjusted_rejects: int = 0
+    risk_adjusted_passes: int = 0
     status: str = STATUS_INSUFFICIENT
     reason_code: str = ""
 
@@ -277,6 +325,65 @@ class ExecutableReplayResult:
         return bool(self.trips) and self.wins == len(self.trips) and len(self.trips) > 1
 
     @property
+    def paths(self) -> tuple[TradeRiskPath, ...]:
+        return tuple(trip.risk_path for trip in self.trips if trip.risk_path is not None)
+
+    @property
+    def median_mae_mxn(self) -> Decimal | None:
+        return percentiles(tuple(p.mae_mxn for p in self.paths)).p50
+
+    @property
+    def p90_mae_mxn(self) -> Decimal | None:
+        return percentiles(tuple(p.mae_mxn for p in self.paths)).p90
+
+    @property
+    def median_mfe_mxn(self) -> Decimal | None:
+        return percentiles(tuple(p.mfe_mxn for p in self.paths)).p50
+
+    @property
+    def p90_mfe_mxn(self) -> Decimal | None:
+        return percentiles(tuple(p.mfe_mxn for p in self.paths)).p90
+
+    @property
+    def capital_hours(self) -> Decimal:
+        """Total capital-time the profile occupied, in MXN-hours."""
+        return sum((p.capital_hours for p in self.paths), ZERO)
+
+    @property
+    def net_pnl_per_capital_hour(self) -> Decimal | None:
+        """Net P&L per capital-hour. The micro-capital efficiency figure.
+
+        None rather than a division by zero when no position ever opened. A strategy that
+        occupies capital for a long time to earn a little is a poor use of a 50 MXN
+        authorization even when its net P&L is positive, and this is the number that says so.
+        """
+        hours = self.capital_hours
+        return (self.net_pnl_mxn / hours) if hours > ZERO else None
+
+    @property
+    def risk_adjusted_summary(self) -> RiskAdjustedSummary:
+        return summarise_risk_paths(
+            market=self.market, profile_id=self.profile_id, paths=self.paths,
+            friction_mxn=self.total_friction_mxn, gross_pnl_mxn=self.gross_pnl_mxn)
+
+    @property
+    def exit_reason_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for trip in self.trips:
+            counts[trip.exit_reason] = counts.get(trip.exit_reason, 0) + 1
+        return dict(sorted(counts.items()))
+
+    @property
+    def mae_exceeds_realised_reward(self) -> bool:
+        """Whether the worst adverse excursion exceeded the whole net result.
+
+        The concise statement of the 0.2.1 finding, kept as a first-class flag so it
+        cannot be missed by reading only the headline P&L.
+        """
+        return (bool(self.paths) and self.net_pnl_mxn > ZERO
+                and self.max_unrealized_drawdown_mxn > self.net_pnl_mxn)
+
+    @property
     def best_trade_mxn(self) -> Decimal | None:
         return max((trip.net_pnl_mxn for trip in self.trips), default=None)
 
@@ -346,6 +453,8 @@ class ExecutableReplayResult:
                 "strategy_signals": self.strategy_signals,
                 "economic_passes": self.economic_passes,
                 "economic_rejects": self.economic_rejects,
+                "risk_adjusted_rejects": self.risk_adjusted_rejects,
+                "risk_adjusted_passes": self.risk_adjusted_passes,
                 "economic_reject_rate": str(self.economic_reject_rate),
                 "simulated_trades": self.simulated_trades,
                 "completed_round_trips": len(self.trips),
@@ -367,6 +476,15 @@ class ExecutableReplayResult:
                 "win_rate": _s(self.win_rate),
                 "speculative_win_rate": self.speculative_win_rate,
                 "realized_only_drawdown_would_mislead": self.max_unrealized_drawdown_mxn > ZERO,
+                "median_mae_mxn": _s(self.median_mae_mxn),
+                "p90_mae_mxn": _s(self.p90_mae_mxn),
+                "median_mfe_mxn": _s(self.median_mfe_mxn),
+                "p90_mfe_mxn": _s(self.p90_mfe_mxn),
+                "mae_exceeds_realised_reward": self.mae_exceeds_realised_reward,
+                "capital_hours": str(self.capital_hours),
+                "net_pnl_per_capital_hour": _s(self.net_pnl_per_capital_hour),
+                "exit_reason_counts": self.exit_reason_counts,
+                "risk_adjusted_summary": self.risk_adjusted_summary.telemetry(),
                 "gross_exposure_mxn": str(self.gross_exposure_mxn),
                 "turnover_mxn": str(self.turnover_mxn),
                 "average_holding_bars": _s(self.average_holding_bars),
@@ -444,6 +562,224 @@ def assess_with_executable_guard(*, market: str, budget_mxn: Decimal,
                            expected_net_edge_bps=model.expected_net_edge_bps)
 
 
+@dataclass(frozen=True, slots=True)
+class RiskAdjustedEntryAssessment:
+    """The pre-entry risk verdict for one prospective opportunity.
+
+    Everything here is derived from the proposal's own declared numbers and the
+    executable price, so it is available before the position exists. Nothing in it is
+    inferred from what the trade later did.
+    """
+
+    admissible: bool
+    reason_code: str
+    declared_reward_mxn: Decimal
+    declared_risk_mxn: Decimal
+    reward_risk_ratio: Decimal | None
+    required_ratio: Decimal
+    max_single_trade_risk_mxn: Decimal
+    boundary_declared: bool
+    time_stop_declared: bool
+
+    def telemetry(self) -> dict[str, Any]:
+        return {"admissible": self.admissible, "reason_code": self.reason_code,
+                "declared_reward_mxn": str(self.declared_reward_mxn),
+                "declared_risk_mxn": str(self.declared_risk_mxn),
+                "reward_risk_ratio": (None if self.reward_risk_ratio is None
+                                      else str(self.reward_risk_ratio)),
+                "required_ratio": str(self.required_ratio),
+                "max_single_trade_risk_mxn": str(self.max_single_trade_risk_mxn),
+                "boundary_declared": self.boundary_declared,
+                "time_stop_declared": self.time_stop_declared,
+                "reward_and_risk_both_net_of_friction": True,
+                "evaluated_before_entry": True}
+
+
+@financial
+def assess_entry_risk(*, proposal: StrategyProposal, execution_price_mxn: Decimal,
+                      budget_mxn: Decimal, taker_fee_rate: Decimal, spread_bps: Decimal,
+                      slippage_bps: Decimal, policy: EconomicPolicy,
+                      required_ratio: Decimal = MINIMUM_REWARD_RISK_RATIO,
+                      max_trade_risk_mxn: Decimal = MAX_SINGLE_TRADE_RISK_MXN,
+                      ) -> RiskAdjustedEntryAssessment:
+    """Decide whether an opportunity satisfies risk policy *before* it is taken.
+
+    The reward and risk magnitudes are the ones EconomicEdgeGuard would itself see, so
+    the two gates cannot disagree about the economics of the same opportunity.
+
+    Two deliberate properties:
+
+    * A profile that declares **no** invalidation price is not rejected here. There is no
+      stated boundary to measure risk against, and inventing one would be substituting
+      this function's judgement for the profile's. It is reported as
+      `boundary_declared=False` instead, so a boundary-less profile cannot later be
+      described as risk-bounded.
+    * The ratio compares *net* reward to the loss the boundary implies, both after the
+      friction the fill will actually bear. A gross ratio would let a profile pass on a
+      move that friction consumes, which is precisely the defect the 0.2.1 evidence found.
+    """
+    boundary = proposal.invalidation_price_mxn
+    if boundary <= ZERO or execution_price_mxn <= ZERO:
+        return RiskAdjustedEntryAssessment(
+            admissible=True, reason_code="NO_DECLARED_RISK_BOUNDARY",
+            declared_reward_mxn=ZERO, declared_risk_mxn=ZERO, reward_risk_ratio=None,
+            required_ratio=required_ratio, max_single_trade_risk_mxn=max_trade_risk_mxn,
+            boundary_declared=False,
+            time_stop_declared=proposal.declares_time_stop)
+
+    # Friction expressed as a fraction of the entry notional, so it can be netted out of
+    # the price move without re-running the full cash-flow model. Two fee legs plus the
+    # spread and slippage the fill will bear.
+    friction_bps = (taker_fee_rate * BPS * Decimal("2")) + spread_bps + slippage_bps
+    friction_mxn = budget_mxn * friction_bps / BPS
+    risk_price = execution_price_mxn - boundary
+    if risk_price <= ZERO:
+        # The boundary is at or above the entry price, so it cannot bound anything. A
+        # profile that declares such a boundary is misreporting its own risk.
+        return RiskAdjustedEntryAssessment(
+            admissible=False, reason_code="INVALIDATION_NOT_BELOW_ENTRY",
+            declared_reward_mxn=max(ZERO, proposal.expected_exit_reference_mxn
+                                    - execution_price_mxn - friction_mxn),
+            declared_risk_mxn=friction_mxn, reward_risk_ratio=None,
+            required_ratio=required_ratio, max_single_trade_risk_mxn=max_trade_risk_mxn,
+            boundary_declared=True, time_stop_declared=proposal.declares_time_stop)
+
+    # Risk is scaled to the budget actually deployed, because the same price boundary is a
+    # different MXN loss at a different position size. Friction is charged on BOTH paths:
+    # a stopped-out trade still paid both fees and the spread, so leaving it out of the loss
+    # would understate the downside, and leaving it out of the reward would overstate the
+    # upside. Netting it from both is what makes the ratio a real reward/risk rather than a
+    # gross figure that flatters every profile.
+    scale = budget_mxn / execution_price_mxn
+    declared_risk_mxn = (budget_mxn * risk_price / execution_price_mxn) + friction_mxn
+    declared_reward_mxn = max(
+        ZERO, (budget_mxn * (proposal.expected_exit_reference_mxn - execution_price_mxn)
+               / execution_price_mxn) - friction_mxn)
+    ratio = declared_reward_mxn / declared_risk_mxn if declared_risk_mxn > ZERO else None
+    del scale
+    within_policy = declared_risk_mxn <= max_trade_risk_mxn
+    admissible = (within_policy and ratio is not None and ratio >= required_ratio)
+    if not admissible:
+        reason = (RISK_ADJUSTED_ENTRY_REJECT if not within_policy
+                  else "REWARD_RISK_BELOW_MINIMUM")
+    else:
+        reason = "OK"
+    del policy  # the guard owns capital admissibility; this gate owns the risk shape
+    return RiskAdjustedEntryAssessment(
+        admissible=admissible, reason_code=reason,
+        declared_reward_mxn=declared_reward_mxn, declared_risk_mxn=declared_risk_mxn,
+        reward_risk_ratio=ratio, required_ratio=required_ratio,
+        max_single_trade_risk_mxn=max_trade_risk_mxn,
+        boundary_declared=True, time_stop_declared=proposal.declares_time_stop)
+
+
+def _scaled_boundary(*, proposal: StrategyProposal, actual_price: Decimal) -> Decimal:
+    """The invalidation price, re-anchored to the price actually paid.
+
+    Same reasoning as `_scaled_target`: the profile derived its boundary from the
+    reference price it saw, and the fill happens a bar later at a different price. Without
+    re-anchoring, a favourable fill would silently widen the risk boundary and an
+    unfavourable one would silently narrow it.
+    """
+    boundary = proposal.invalidation_price_mxn
+    reference = proposal.entry_reference_mxn
+    if boundary <= ZERO:
+        return ZERO
+    if reference <= ZERO or actual_price <= ZERO:
+        return boundary
+    return boundary * (actual_price / reference)
+
+
+@dataclass(slots=True)
+class _OpenPosition:
+    """Mutable state of one open position during a replay.
+
+    A typed structure rather than a dict: this is the object that decides where a real
+    order would exit, and every field is money or a bar index. An `Any`-typed dict here
+    means a typo in a key silently reads `None` and the boundary check quietly stops
+    working, which is not a failure mode worth accepting in the risk path.
+    """
+
+    entry: FillResult
+    target_price_mxn: Decimal
+    invalidation_price_mxn: Decimal
+    max_holding_bars: int
+    signal_index: int
+    fill_index: int
+    reason: str
+    exit_signal_index: int = 0
+    exit_reason: str = ""
+    worst_net_pnl_mxn: Decimal = ZERO
+    bars_to_worst: int = 0
+    peak_net_pnl_mxn: Decimal = ZERO
+    bars_to_peak: int = 0
+    path_observations: int = 0
+
+
+def _invalidation_breached(*, position: _OpenPosition, candle: Candle) -> bool:
+    """Whether this bar traded at or through the declared invalidation boundary.
+
+    Uses the bar's LOW, not its close. A position that traded through its boundary and
+    recovered would otherwise be recorded as never having been invalidated, which would
+    make every boundary look safer than it is.
+    """
+    if position.invalidation_price_mxn <= ZERO:
+        return False
+    return candle.low <= position.invalidation_price_mxn
+
+
+def _time_stop_reached(*, position: _OpenPosition, index: int) -> bool:
+    """Whether the declared holding limit has elapsed.
+
+    Purely a function of the bar index and the entry fill index. It reads no price, so it
+    cannot be influenced by what the price subsequently did.
+    """
+    if position.max_holding_bars <= 0:
+        return False
+    return (index - position.fill_index) >= position.max_holding_bars
+
+
+def _strategy_exit_reason(*, proposal: StrategyProposal, position: _OpenPosition,
+                          candle: Candle) -> str:
+    """Attribute a strategy-initiated exit to target or invalidation, deterministically.
+
+    A profile signals SELL for both conditions. Recording them as one reason would make a
+    profit target and a stop indistinguishable in the evidence, and they are opposite
+    findings. The price at the signal bar decides, not the reason code, so a profile that
+    mislabels its own condition cannot mislabel the evidence.
+    """
+    if position.target_price_mxn > ZERO and candle.close >= position.target_price_mxn:
+        return EXIT_TARGET_REACHED
+    if _invalidation_breached(position=position, candle=candle):
+        return EXIT_INVALIDATED
+    return proposal.reason_code or SIGNAL_SELL
+
+
+@financial
+def _risk_path(*, position: _OpenPosition, economics: RoundTripEconomics,
+               holding_bars: int, exit_reason: str,
+               budget_mxn: Decimal) -> TradeRiskPath:
+    """Assemble the forward-only risk path for one completed trip.
+
+    MAE and MFE are the worst and best *net* counterfactual valuations the position
+    carried, which is why they are comparable to the realized net P&L they sit beside.
+    """
+    adverse = max(ZERO, -position.worst_net_pnl_mxn)
+    favourable = max(ZERO, position.peak_net_pnl_mxn)
+    return TradeRiskPath(
+        mae_mxn=adverse,
+        mae_bps=(adverse / budget_mxn * BPS) if budget_mxn > ZERO else ZERO,
+        mfe_mxn=favourable,
+        mfe_bps=(favourable / budget_mxn * BPS) if budget_mxn > ZERO else ZERO,
+        realised_gross_pnl_mxn=(economics.net_proceeds_mxn - budget_mxn
+                                + economics.total_friction_mxn),
+        realised_net_pnl_mxn=economics.net_pnl_mxn,
+        holding_bars=holding_bars, holding_minutes=holding_bars * MINUTES_PER_BAR,
+        time_to_mae_bars=position.bars_to_worst,
+        time_to_mfe_bars=position.bars_to_peak,
+        exit_reason=exit_reason, observations=position.path_observations)
+
+
 def _classify(*, trips: list[ExecutableRoundTrip], evaluations: int, signals: int,
               passes: int, rejects: int) -> tuple[str, str]:
     if signals == 0:
@@ -482,11 +818,13 @@ def replay_executable(*, candles: tuple[Candle, ...], profile_id: str, market: s
 
     evaluations = 0
     strategy_signals = 0
-    passes = 0
-    rejects = 0
+    economic_passes = 0
+    economic_rejects = 0
+    risk_adjusted_passes = 0
+    risk_rejects = 0
     unfilled = 0
     trips: list[ExecutableRoundTrip] = []
-    position: dict[str, Any] | None = None
+    position: _OpenPosition | None = None
     # A pending fill carries the context of the signal that queued it, so a later bar
     # never reads state that belongs to an earlier decision.
     pending_entry: dict[str, Any] | None = None
@@ -505,17 +843,20 @@ def replay_executable(*, candles: tuple[Candle, ...], profile_id: str, market: s
                 modelled_slippage_bps=modelled_slippage_bps, base_currency=base,
                 quote_currency=quote)
             if entry.fully_filled and entry.filled_quantity > ZERO:
-                position = {
-                    "entry": entry,
-                    "target_price_mxn": _scaled_target(
+                # The risk boundary is fixed at entry, from the proposal's own numbers,
+                # and never revised afterwards. That is what makes it a boundary rather
+                # than a trailing excuse.
+                position = _OpenPosition(
+                    entry=entry,
+                    target_price_mxn=_scaled_target(
                         proposal=queued["proposal"],
                         actual_price=entry.execution_price_mxn),
-                    "signal_index": queued["signal_index"], "fill_index": index,
-                    "reason": queued["reason"], "exit_signal_index": 0,
-                    "exit_reason": "",
-                    # Excursion tracking: how far the open position ran against us.
-                    "worst_net_pnl_mxn": ZERO, "bars_to_worst": 0,
-                    "peak_net_pnl_mxn": ZERO}
+                    invalidation_price_mxn=_scaled_boundary(
+                        proposal=queued["proposal"],
+                        actual_price=entry.execution_price_mxn),
+                    max_holding_bars=queued["proposal"].max_holding_bars,
+                    signal_index=queued["signal_index"], fill_index=index,
+                    reason=queued["reason"])
             else:
                 unfilled += 1
 
@@ -524,67 +865,106 @@ def replay_executable(*, candles: tuple[Candle, ...], profile_id: str, market: s
             if position is not None:
                 exit_fill = model_sell(
                     observation=_observation(candles[index], bids=bids, asks=asks),
-                    quantity=position["entry"].filled_quantity,
+                    quantity=position.entry.filled_quantity,
                     taker_fee_rate=taker_fee_rate,
                     modelled_slippage_bps=modelled_slippage_bps, base_currency=base,
                     quote_currency=quote)
                 if (last_exit_index is None
-                        or position["fill_index"] - last_exit_index
+                        or position.fill_index - last_exit_index
                         >= DISTINCT_EPISODE_GAP_BARS):
                     episode += 1
                 economics = RoundTripEconomics(
-                    entry=position["entry"], exit=exit_fill, budget_mxn=budget_mxn,
-                    own_quantity=position["entry"].filled_quantity)
+                    entry=position.entry, exit=exit_fill, budget_mxn=budget_mxn,
+                    own_quantity=position.entry.filled_quantity)
                 excursion = Excursion(
-                    peak_net_pnl_mxn=position["peak_net_pnl_mxn"],
-                    worst_net_pnl_mxn=position["worst_net_pnl_mxn"],
-                    bars_to_worst=position["bars_to_worst"],
-                    bars_held=index - position["fill_index"])
+                    peak_net_pnl_mxn=position.peak_net_pnl_mxn,
+                    worst_net_pnl_mxn=position.worst_net_pnl_mxn,
+                    bars_to_worst=position.bars_to_worst,
+                    bars_held=index - position.fill_index)
+                holding_bars = index - position.fill_index
+                risk_path = _risk_path(
+                    position=position, economics=economics, holding_bars=holding_bars,
+                    exit_reason=queued_exit["reason"], budget_mxn=budget_mxn)
                 trips.append(ExecutableRoundTrip(
-                    entry_signal_index=position["signal_index"],
-                    entry_fill_index=position["fill_index"],
-                    exit_signal_index=position["exit_signal_index"],
+                    entry_signal_index=position.signal_index,
+                    entry_fill_index=position.fill_index,
+                    exit_signal_index=position.exit_signal_index,
                     exit_fill_index=index, economics=economics,
-                    entry_reason=position["reason"],
+                    entry_reason=position.reason,
                     exit_reason=queued_exit["reason"], episode=episode,
-                    excursion=excursion))
+                    excursion=excursion, risk_path=risk_path))
                 last_exit_index = index
                 position = None
 
         # ---- 2. decide from history ending at THIS candle (past-only) ----
-        held = position["entry"].filled_quantity if position else ZERO
+        held = position.entry.filled_quantity if position else ZERO
         held_basis = budget_mxn if position else ZERO
+        # The execution price is passed alongside the cost basis because they differ by the
+        # entry fee (~78 bps at the confirmed rate). A profile anchoring a bps risk boundary
+        # to the cost basis would place that boundary almost on top of the entry price and
+        # invalidate the position on its first bar. `cost_basis_mxn` stays the recorded
+        # outlay; `entry_price_mxn` is what the market actually charged.
+        held_price = position.entry.execution_price_mxn if position else ZERO
+        # `target_price_mxn` is the position's target as fixed when it opened. Passing it in
+        # stops a profile from recomputing its target each bar from drifting features, which
+        # made the target unreachable in a sustained move.
+        held_target = position.target_price_mxn if position else ZERO
         proposal: StrategyProposal = evaluator.propose(
             candles=candles[:index + 1], quantity=held, cost_basis_mxn=held_basis,
-            market=market)
+            market=market, entry_price_mxn=held_price, target_price_mxn=held_target)
         evaluations += 1
 
         # ---- 2b. mark an open position to market ----
         # Placed after the proposal for this bar, so the decision cannot read it. It must
         # also come BEFORE the branch below, because that branch `continue`s on the
         # hold path and would otherwise skip the measurement entirely.
+        #
+        # The position is valued from the bar's CLOSE, not from the bid-side executable
+        # price. Those answer different questions: the bid is where an order could exit
+        # *right now* (used by the guard and the boundary check), whereas MAE/MFE describe
+        # the path the position travelled. Valuing the path at the bid would embed half the
+        # spread in every MAE and would make MFE almost always zero, since the bid sits
+        # below the close in a rising bar.
         if position is not None:
-            mark = execution_price_for_sell(
-                observation=_observation(candles[index], bids=bids, asks=asks),
-                quantity=position["entry"].filled_quantity,
-                modelled_slippage_bps=modelled_slippage_bps)
-            mark_price = mark[0]
-            marked = (mark_price * position["entry"].filled_quantity
+            path_price = candles[index].close
+            marked = (path_price * position.entry.filled_quantity
                       * (ONE - taker_fee_rate) - budget_mxn)
-            if marked < position["worst_net_pnl_mxn"]:
-                position["worst_net_pnl_mxn"] = marked
-                position["bars_to_worst"] = index - position["fill_index"]
-            position["peak_net_pnl_mxn"] = max(position["peak_net_pnl_mxn"], marked)
+            if marked < position.worst_net_pnl_mxn:
+                position.worst_net_pnl_mxn = marked
+                position.bars_to_worst = index - position.fill_index
+            if marked > position.peak_net_pnl_mxn:
+                position.peak_net_pnl_mxn = marked
+                position.bars_to_peak = index - position.fill_index
+            position.path_observations += 1
 
         if position is not None:
-            if proposal.decision == DECISION_SELL and pending_exit is None:
+            # Risk exits are evaluated from the price observed on THIS bar, strictly from
+            # data at or before the current bar. A boundary breach does not wait for the
+            # strategy to agree, because invalidation means the thesis is already over.
+            breached = _invalidation_breached(position=position, candle=candles[index])
+            timed_out = _time_stop_reached(position=position, index=index)
+            if (breached or timed_out) and pending_exit is None:
                 strategy_signals += 1
-                position["exit_signal_index"] = index
-                position["exit_reason"] = proposal.reason_code
+                position.exit_signal_index = index
+                # The cause is a boundary breach or a holding limit, both known without
+                # consulting the strategy again.
+                reason = EXIT_INVALIDATED if breached else EXIT_TIME_STOP
+                position.exit_reason = reason
                 fill_index = index + fill_delay_bars
                 if fill_index < len(candles):
-                    pending_exit = {"fill_index": fill_index,
-                                    "reason": proposal.reason_code}
+                    pending_exit = {"fill_index": fill_index, "reason": reason}
+                else:
+                    unfilled += 1
+                continue
+            if proposal.decision == DECISION_SELL and pending_exit is None:
+                strategy_signals += 1
+                position.exit_signal_index = index
+                reason = _strategy_exit_reason(
+                    proposal=proposal, position=position, candle=candles[index])
+                position.exit_reason = reason
+                fill_index = index + fill_delay_bars
+                if fill_index < len(candles):
+                    pending_exit = {"fill_index": fill_index, "reason": reason}
                 else:
                     unfilled += 1
             continue
@@ -610,21 +990,38 @@ def replay_executable(*, candles: tuple[Candle, ...], profile_id: str, market: s
                 spread_bps=(ZERO if has_book else spread_bps),
                 slippage_bps=(ZERO if has_book else modelled_slippage_bps))
             if not assessment.admissible:
-                rejects += 1
+                economic_rejects += 1
                 continue
-            passes += 1
+            # ---- 3b. risk-adjusted entry gate (spec section 9) ----
+            # The opportunity must be able to satisfy risk policy using information
+            # available BEFORE entry. Waiting for a large drawdown to reveal that risk was
+            # excessive would mean the position had already taken the risk.
+            economic_passes += 1
+            risk_verdict = assess_entry_risk(
+                proposal=proposal, execution_price_mxn=guard_price,
+                budget_mxn=budget_mxn, taker_fee_rate=taker_fee_rate,
+                spread_bps=(ZERO if has_book else spread_bps),
+                slippage_bps=(ZERO if has_book else modelled_slippage_bps),
+                policy=policy)
+            if not risk_verdict.admissible:
+                risk_rejects += 1
+                continue
+            risk_adjusted_passes += 1
             pending_entry = {"fill_index": fill_index, "signal_index": index,
                              "reason": proposal.reason_code, "proposal": proposal}
 
     status, reason = _classify(trips=trips, evaluations=evaluations,
-                              signals=strategy_signals, passes=passes, rejects=rejects)
+                              signals=strategy_signals, passes=risk_adjusted_passes,
+                              rejects=economic_rejects)
     return ExecutableReplayResult(
         market=market, profile_id=profile_id,
         profile_fingerprint=evaluator.identity.fingerprint,
         strategy_fingerprint=evaluator.identity.strategy_fingerprint,
         candles=len(candles), evaluations=evaluations,
-        strategy_signals=strategy_signals, economic_passes=passes,
-        economic_rejects=rejects, simulated_trades=len(trips),
+        strategy_signals=strategy_signals, economic_passes=economic_passes,
+        economic_rejects=economic_rejects, risk_adjusted_rejects=risk_rejects,
+        risk_adjusted_passes=risk_adjusted_passes,
+        simulated_trades=len(trips),
         unfilled_signals=unfilled, trips=tuple(trips),
         evidence_quality=_evidence_quality(has_book=has_book), spread_bps=spread_bps,
         modelled_slippage_bps=modelled_slippage_bps,

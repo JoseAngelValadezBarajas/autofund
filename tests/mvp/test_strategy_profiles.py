@@ -40,7 +40,9 @@ from autofund.mvp.position_contract import (
 from autofund.mvp.profile_library import (
     CHALLENGER_PROFILES,
     CHAMPION_PROFILE,
+    FROZEN_PROFILES,
     PROFILE_REGISTRY,
+    RISK_ADJUSTED_CHALLENGERS,
     MeanReversionSafeV1,
     TrendContinuationV1,
     VolatilityAwareMeanReversionV1,
@@ -402,7 +404,32 @@ def test_registry_is_stable_and_contains_the_champion_first() -> None:
     ids = [profile.profile_id for profile in PROFILE_REGISTRY]
     assert ids[0] == "mean-reversion-safe-v1"
     assert set(ids) == {"mean-reversion-safe-v1", "trend-continuation-v1",
-                        "volatility-mean-reversion-v1"}
+                        "volatility-mean-reversion-v1", "volatility-mean-reversion-v2",
+                        "range-expansion-v1"}
+    # The three 0.2.1 profiles keep their exact positions. MVP 0.2.2 appended challengers;
+    # it must not have reordered or displaced the frozen evidence.
+    assert ids[:3] == ["mean-reversion-safe-v1", "trend-continuation-v1",
+                       "volatility-mean-reversion-v1"]
+
+
+def test_frozen_profiles_are_named_and_unchanged() -> None:
+    """MVP 0.2.2 must not retune or overwrite any 0.2.1 profile in place."""
+    frozen = {profile.profile_id for profile in FROZEN_PROFILES}
+    added = {profile.profile_id for profile in RISK_ADJUSTED_CHALLENGERS}
+    assert frozen == {"mean-reversion-safe-v1", "trend-continuation-v1",
+                      "volatility-mean-reversion-v1"}
+    assert added == {"volatility-mean-reversion-v2", "range-expansion-v1"}
+    assert frozen.isdisjoint(added)
+
+
+def test_the_two_generations_share_a_strategy_id_but_not_an_identity() -> None:
+    """v2 is a new version of the same strategy, so it must not share v1's fingerprint."""
+    v1 = next(p for p in PROFILE_REGISTRY if p.profile_id == "volatility-mean-reversion-v1")
+    v2 = next(p for p in PROFILE_REGISTRY if p.profile_id == "volatility-mean-reversion-v2")
+    assert v1.identity.strategy_id == v2.identity.strategy_id
+    assert v1.identity.version != v2.identity.version
+    assert v1.identity.fingerprint != v2.identity.fingerprint
+    assert v1.identity.strategy_fingerprint != v2.identity.strategy_fingerprint
 
 
 def test_unknown_profile_id_raises_instead_of_defaulting() -> None:
