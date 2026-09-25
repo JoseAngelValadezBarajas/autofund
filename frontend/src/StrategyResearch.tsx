@@ -27,6 +27,29 @@ export interface RiskAdjustedProfile extends ResearchProfile {
   risk_adjusted_metrics:boolean; declares_invalidation:boolean;
 }
 
+export interface ExecutionResearchView {
+  maker_fee_rate:string|null;
+  taker_fee_rate:string;
+  maker_fee_confirmed:boolean;
+  maker_below_taker:boolean;
+  modes:Record<string,{mode:string;entry_liquidity:string;exit_liquidity:string;
+    entry_order_type:string;exit_order_type:string;timeout_bars:number;
+    requires_post_only:boolean;research_only:boolean;production_authorised:boolean;
+    description:string}>;
+  fee_floors:Record<string,string>;
+  fill_evidence:string;
+  maker_fills_determined:boolean;
+  research_only:boolean;
+  production_authorised:boolean;
+  cancel_implemented:boolean;
+  production_mutations_added:number;
+}
+
+export interface ProductionGapView {
+  missing:string[]; partial:string[]; present:string[];
+  production_mutations_required:string[];
+}
+
 export interface StrategyResearchView {
   research_version:string;
   promotion:string;
@@ -48,6 +71,8 @@ export interface StrategyResearchView {
     mae_mfe_implemented:boolean; markets_pooled:boolean;
     holdout_frozen_before_selection:boolean; drawdown_policy_changed:boolean;
     capital_limits_changed:boolean};
+  execution_research?:ExecutionResearchView;
+  production_gap?:ProductionGapView;
 }
 
 /** Shadow rows carry whichever fields the pipeline produced; read them defensively. */
@@ -207,6 +232,81 @@ function RiskAdjustedPanel({research}:{research:StrategyResearchView}){
   </>;
 }
 
+function ExecutionResearchPanel({research}:{research:StrategyResearchView}){
+  const exec=research.execution_research;
+  const gap=research.production_gap;
+  if(!exec)return null;
+  const floors=Object.entries(exec.fee_floors??{});
+  const modes=Object.values(exec.modes??{});
+  return <>
+    <h3>Passive execution economics</h3>
+    <p>Research only. These are hypotheses about how an order would be <b>submitted</b>,
+      not an authorisation: no passive order has been placed, no cancel capability exists,
+      and the Production mutation boundary is unchanged. Fee floors are structural and come
+      from the account-confirmed schedule; the <b>fill</b> question is separate and is
+      deliberately not answered, because candle history cannot show that a resting order
+      was ahead of the trades that printed at its price.</p>
+    <div className="table"><table><tbody>
+      <tr><th>Maker fee (account confirmed)</th>
+        <td data-maker-confirmed={exec.maker_fee_confirmed}>
+          {exec.maker_fee_confirmed?exec.maker_fee_rate:'UNAVAILABLE'}</td></tr>
+      <tr><th>Taker fee</th><td>{exec.taker_fee_rate}</td></tr>
+      <tr><th>Maker below taker</th>
+        <td data-maker-cheaper={exec.maker_below_taker}>
+          {exec.maker_below_taker?'YES':'NO'}</td></tr>
+      <tr><th>Fill evidence</th>
+        <td data-fill-evidence={exec.fill_evidence}>{exec.fill_evidence}</td></tr>
+      <tr><th>Maker fills determined</th>
+        <td data-maker-fills={exec.maker_fills_determined}>
+          {exec.maker_fills_determined?'YES':'NO'}</td></tr>
+      <tr><th>Passive Production authorised</th>
+        <td data-production-authorised={exec.production_authorised}>
+          {exec.production_authorised?'YES':'NO'}</td></tr>
+      <tr><th>Cancel capability implemented</th>
+        <td data-cancel-implemented={exec.cancel_implemented}>
+          {exec.cancel_implemented?'YES':'NO'}</td></tr>
+    </tbody></table></div>
+
+    <h4>Fee-only round-trip floor by execution mode</h4>
+    <p>The gross price movement required for fees alone to break even, using the real fee
+      currencies: the buy fee is charged in the base asset and the sell fee in the quote
+      asset, so the round trip is not the sum of the two rates. Spread is excluded because
+      only one leg pays it, and counting it here would charge the same cost twice.</p>
+    <div className="table"><table>
+      <thead><tr><th>Mode</th><th>Entry</th><th>Exit</th><th>Timeout (bars)</th>
+        <th>Post-only</th><th>Fee-only floor (bps)</th></tr></thead>
+      <tbody>{modes.map(mode=><tr key={mode.mode} data-mode={mode.mode}
+        data-requires-post-only={mode.requires_post_only}>
+        <td>{mode.mode}</td>
+        <td>{mode.entry_order_type}</td>
+        <td>{mode.exit_order_type}</td>
+        <td>{mode.timeout_bars}</td>
+        <td>{mode.requires_post_only?'YES':'NO'}</td>
+        <td>{exec.fee_floors?.[mode.mode]??'—'}</td>
+      </tr>)}</tbody></table></div>
+    <p>{floors.length} modes priced. A lower floor means a smaller move is needed to clear
+      costs; it says nothing about whether such a move will be found, or whether a resting
+      order would have filled.</p>
+
+    {gap&&<>
+      <h4>Production architecture gap</h4>
+      <p>What would have to change before passive Production execution could be safe. No new
+        Production mutation capability was added by this milestone.</p>
+      <div className="table"><table><tbody>
+        <tr><th>Present</th><td data-gap-present={gap.present.length}>
+          {gap.present.join(', ')||'NONE'}</td></tr>
+        <tr><th>Partial</th><td data-gap-partial={gap.partial.length}>
+          {gap.partial.join(', ')||'NONE'}</td></tr>
+        <tr><th>Missing</th><td data-gap-missing={gap.missing.length}>
+          {gap.missing.join(', ')||'NONE'}</td></tr>
+        <tr><th>Production mutations required</th>
+          <td data-gap-mutations={gap.production_mutations_required.length}>
+            {gap.production_mutations_required.join(', ')||'NONE'}</td></tr>
+      </tbody></table></div>
+    </>}
+  </>;
+}
+
 export function StrategyResearchPage({research}:
   {research:StrategyResearchView|undefined|null}){
   if(!research)return <article>
@@ -240,6 +340,7 @@ export function StrategyResearchPage({research}:
     <ChampionViability research={research}/>
     <ProfileTable research={research}/>
     <RiskAdjustedPanel research={research}/>
+    <ExecutionResearchPanel research={research}/>
     <ShadowTable rows={research.shadow}/>
     <MarketTable research={research}/>
 

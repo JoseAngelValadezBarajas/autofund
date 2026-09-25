@@ -47,6 +47,58 @@ class ShadowFee:
 
 
 @dataclass(frozen=True)
+class AccountFeeSchedule:
+    """Account-confirmed maker and taker rates for one book.
+
+    Both rates are read from the exchange's own fee endpoint rather than assumed or
+    taken from documentation. Keeping them together is the point: MVP 0.2.3 asks whether
+    a different execution style changes the economics, and that question cannot be
+    answered from the taker rate alone. An earlier parser kept only `taker_fee_decimal`
+    and discarded `maker_fee_decimal`, which silently made the maker hypothesis
+    untestable.
+    """
+
+    book: str
+    maker_rate: Decimal
+    taker_rate: Decimal
+    source: FeeSource
+    observed_at: str = ""
+    volume_currency: str = ""
+    current_volume: Decimal = Decimal("0")
+
+    def __post_init__(self) -> None:
+        for name in ("maker_rate", "taker_rate"):
+            rate = decimal(getattr(self, name), name)
+            if not 0 <= rate < 1:
+                raise MarketDataInvalid(f"invalid {name}")
+        if not isinstance(self.source, FeeSource):
+            raise MarketDataInvalid("invalid fee provenance")
+        if self.maker_rate > self.taker_rate:
+            # A maker rate above the taker rate would invert the economic premise of
+            # every passive-execution conclusion, so it is refused rather than carried.
+            raise MarketDataInvalid("maker rate above taker rate")
+
+    @property
+    def maker_below_taker_bps(self) -> Decimal:
+        """Round-trip saving from paying maker on both legs, in bps of notional."""
+        return (self.taker_rate - self.maker_rate) * Decimal("2") * Decimal("10000")
+
+    def rate_for(self, *, liquidity: str) -> Decimal:
+        if liquidity == "MAKER":
+            return self.maker_rate
+        if liquidity == "TAKER":
+            return self.taker_rate
+        raise MarketDataInvalid(f"unknown liquidity role: {liquidity}")
+
+    def public(self) -> dict[str, str]:
+        return {"book": self.book, "maker_fee_decimal": str(self.maker_rate),
+                "taker_fee_decimal": str(self.taker_rate), "source": str(self.source),
+                "observed_at": self.observed_at,
+                "volume_currency": self.volume_currency,
+                "current_volume": str(self.current_volume)}
+
+
+@dataclass(frozen=True)
 class MarketLimits:
     book: str
     minimum_amount: Decimal

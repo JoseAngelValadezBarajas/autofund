@@ -4,7 +4,7 @@ import {MvpApp} from './MvpApp';
 
 class Events {addEventListener(){} close(){}}
 
-const stopped:any={product_version:'AutoFund MVP 0.2.2',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+const stopped:any={product_version:'AutoFund MVP 0.2.3',demo_mode:true,app_state:'STOPPED',auto_execution:false,
  session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
  risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
  realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'mean-reversion-safe',strategy_id:'mean_reversion',
@@ -68,7 +68,26 @@ const research:any={research_version:'autofund.production-market-selector.v1',
   'mae_to_reward_ratio_ascending','effective_drawdown_ascending','net_pnl_descending'],
   configuration_sets:{'volatility-mean-reversion-v2':4,'range-expansion-v1':4},
   mae_mfe_implemented:true,markets_pooled:false,holdout_frozen_before_selection:true,
-  drawdown_policy_changed:false,capital_limits_changed:false}};
+  drawdown_policy_changed:false,capital_limits_changed:false},
+ execution_research:{maker_fee_rate:'0.00600000',taker_fee_rate:'0.00780000',
+  maker_fee_confirmed:true,maker_below_taker:true,
+  modes:{
+   TAKER_TAKER:{mode:'TAKER_TAKER',entry_liquidity:'TAKER',exit_liquidity:'TAKER',
+    entry_order_type:'MARKET',exit_order_type:'MARKET',timeout_bars:1,
+    requires_post_only:false,research_only:true,production_authorised:false,
+    description:'baseline'},
+   MAKER_MAKER:{mode:'MAKER_MAKER',entry_liquidity:'MAKER',exit_liquidity:'MAKER',
+    entry_order_type:'LIMIT_POST_ONLY',exit_order_type:'LIMIT_POST_ONLY',timeout_bars:5,
+    requires_post_only:true,research_only:true,production_authorised:false,
+    description:'both legs passive'}},
+  fee_floors:{TAKER_TAKER:'157.8444',MAKER_MMAKER:'121.0887'},
+  fill_evidence:'CANDLE_ONLY_UNCERTAIN',maker_fills_determined:false,
+  research_only:true,production_authorised:false,cancel_implemented:false,
+  production_mutations_added:0},
+ production_gap:{missing:['cancel_capability','stale_order_handling'],
+  partial:['limit_order_submission','price_field'],
+  present:['open_order_monitoring','one_unresolved_order_invariant'],
+  production_mutations_required:['limit_order_submission','cancel_capability']}};
 
 beforeEach(()=>{vi.stubGlobal('EventSource',Events);vi.stubGlobal('fetch',vi.fn().mockResolvedValue({json:async()=>({control_token:'token'})}))});
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
@@ -182,4 +201,49 @@ test('the research page states that policy and capital limits are unchanged',()=
  openProfiles();
  expect(document.querySelector('[data-policy-changed="false"]')).toBeTruthy();
  expect(document.querySelector('[data-capital-changed="false"]')).toBeTruthy();
+});
+
+test('passive execution research is shown with the account-confirmed maker fee',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Passive execution economics')).toBeTruthy();
+ expect(document.querySelector('[data-maker-confirmed="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-maker-cheaper="true"]')).toBeTruthy();
+});
+
+test('the fill evidence class is shown and maker fills are not claimed',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-fill-evidence="CANDLE_ONLY_UNCERTAIN"]')).toBeTruthy();
+ // Candle history cannot support a maker fill, so the page must not imply one was found.
+ expect(document.querySelector('[data-maker-fills="false"]')).toBeTruthy();
+});
+
+test('passive Production is shown as not authorised and cancel as not implemented',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-production-authorised="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-cancel-implemented="false"]')).toBeTruthy();
+});
+
+test('every execution mode is priced and its post-only requirement is visible',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const rows=document.querySelectorAll('[data-mode]');
+ expect(rows.length).toBe(2);
+ const postOnly=Array.from(rows)
+   .filter(row=>row.getAttribute('data-requires-post-only')==='true');
+ expect(postOnly.length).toBe(1);
+ expect(postOnly[0].getAttribute('data-mode')).toBe('MAKER_MAKER');
+});
+
+test('the Production architecture gap is reported with its required mutations',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Production architecture gap')).toBeTruthy();
+ expect(document.querySelector('[data-gap-missing="2"]')).toBeTruthy();
+ // Cancellation is the security blocker and must be visible as a required mutation.
+ const mutations=document.querySelector('[data-gap-mutations="2"]');
+ expect(mutations).toBeTruthy();
+ expect(mutations?.textContent).toContain('cancel_capability');
 });

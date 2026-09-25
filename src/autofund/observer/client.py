@@ -4,6 +4,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -26,11 +27,13 @@ from .errors import (
     StrictReadOnlyLimitation,
 )
 from .models import (
+    AccountFeeSchedule,
     BookConstraints,
     MarketLimits,
     ObservedBalance,
     OhlcCandle,
     OrderBookSnapshot,
+    PublicTrade,
     ShadowFee,
     Ticker,
     book_name,
@@ -231,6 +234,25 @@ class BitsoProductionReadOnlyClient:
     def order_book(self, book: str) -> OrderBookSnapshot:
         return depth(self.read("order_book", {"book": book_name(book)}), book_name(book))
 
+    def trades(self, book: str, *, limit: int | None = None,
+               marker: str | None = None,
+               sort: str | None = None) -> tuple[PublicTrade, ...]:
+        """Recent public trade tape. GET-only, no credentials, no session.
+
+        The trade tape is the only evidence that can support a maker-fill claim: a limit
+        order fills because someone traded against it, so a fill model built on candles
+        alone is inference, not observation. This accessor exists so that evidence can be
+        collected rather than assumed.
+        """
+        query: dict[str, str] = {"book": book_name(book)}
+        if limit is not None:
+            query["limit"] = str(int(limit))
+        if marker is not None:
+            query["marker"] = str(marker)
+        if sort is not None:
+            query["sort"] = str(sort)
+        return parsing.trades(self.read("trades", query), book_name(book))
+
     def ohlc(self, book: str, *, time_bucket: int = 60, start_ms: int | None = None,
              end_ms: int | None = None, limit: int | None = None) -> tuple[OhlcCandle, ...]:
         """Public historical candles. GET-only, no credentials, no session.
@@ -256,6 +278,17 @@ class BitsoProductionReadOnlyClient:
 
     def fee_schedule(self, book: str) -> ShadowFee:
         return parsing.fees(self.read("fees"), book_name(book))
+
+    def account_fee_schedule(self, book: str) -> AccountFeeSchedule:
+        """Account-confirmed maker AND taker rates for one book.
+
+        GET-only. `fee_schedule` above keeps its taker-only contract, because changing it
+        would silently alter the fee every existing economic verdict was computed from.
+        This accessor is the one that can see the maker rate.
+        """
+        observed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        return parsing.fee_schedule(self.read("fees"), book_name(book),
+                                   observed_at=observed_at)
 
     def status(
         self, book: str = "btc_mxn", *, show_balances: bool = False

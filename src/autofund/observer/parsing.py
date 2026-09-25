@@ -9,6 +9,7 @@ from autofund.replay.serialization import utc_timestamp
 
 from .errors import MarketDataInvalid
 from .models import (
+    AccountFeeSchedule,
     BookConstraints,
     FeeSource,
     Level,
@@ -162,6 +163,36 @@ def fees(payload: object, book: str) -> ShadowFee:
         raise MarketDataInvalid("account fee unavailable")
     return ShadowFee(
         number(matches[0].get("taker_fee_decimal")), FeeSource.CONFIRMED_ACCOUNT_FEE
+    )
+
+
+def fee_schedule(payload: object, book: str, *, observed_at: str = "") -> AccountFeeSchedule:
+    """Both account-confirmed rates for one book, when the account publishes a maker rate.
+
+    Falls back to the taker rate for maker only when the exchange omits
+    `maker_fee_decimal`. That fallback is conservative in the right direction: it makes
+    passive execution look exactly as expensive as aggressive execution, so a passive
+    conclusion cannot be manufactured out of a missing field. Whether a fallback was used
+    is visible because the two rates are then equal.
+    """
+    matches = [
+        obj(row)
+        for row in array(obj(payload).get("fees"))
+        if obj(row).get("book") == book
+    ]
+    if len(matches) != 1:
+        raise MarketDataInvalid("account fee unavailable")
+    row = matches[0]
+    taker = number(row.get("taker_fee_decimal"))
+    raw_maker = row.get("maker_fee_decimal")
+    maker = number(raw_maker) if raw_maker is not None else taker
+    volume = row.get("current_volume")
+    return AccountFeeSchedule(
+        book=book, maker_rate=maker, taker_rate=taker,
+        source=FeeSource.CONFIRMED_ACCOUNT_FEE, observed_at=observed_at,
+        volume_currency=text(row.get("volume_currency")) if row.get("volume_currency")
+        else "",
+        current_volume=number(volume) if volume is not None else Decimal("0"),
     )
 
 

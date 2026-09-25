@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2.2"
+PRODUCT_VERSION = "AutoFund MVP 0.2.3"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1340,6 +1340,12 @@ class AutoFundOrchestrator:
         """
         from .challenger_research import CONFIG_SETS, SELECTION_RULE
         from .economics import DEFAULT_POLICY
+        from .execution_gap import MISSING, PARTIAL, PRESENT, architecture_gap
+        from .passive_execution import (
+            CANDLE_ONLY_UNCERTAIN,
+            execution_modes,
+            fee_floors,
+        )
         from .profile_library import (
             EVALUATORS,
             FROZEN_PROFILES,
@@ -1363,6 +1369,11 @@ class AutoFundOrchestrator:
 
         runner = self.runner
         taker_fee = getattr(runner, "_taker_fee_rate", Decimal("0"))
+        # The maker rate is only meaningful when the account actually confirmed one. When
+        # it is unknown, the research view says so rather than substituting the taker rate,
+        # because an unconfirmed maker rate is exactly the assumption this milestone must
+        # not make.
+        maker_fee = getattr(runner, "_maker_fee_rate", None)
         preflight = getattr(runner, "last_preflight", None)
         spread_bps = Decimal("0")
         if preflight is not None:
@@ -1431,6 +1442,39 @@ class AutoFundOrchestrator:
                 "holdout_frozen_before_selection": True,
                 "drawdown_policy_changed": False,
                 "capital_limits_changed": False,
+            },
+            # Passive execution research (MVP 0.2.3). The fee floors are structural and
+            # answerable from the account schedule alone; the fill question is separate and
+            # is NOT answered, which is why the evidence section reports the weakest class.
+            "execution_research": {
+                "maker_fee_rate": (None if maker_fee is None else str(maker_fee)),
+                "taker_fee_rate": str(taker_fee),
+                "maker_fee_confirmed": maker_fee is not None and maker_fee > Decimal("0"),
+                "maker_below_taker": (maker_fee is not None and maker_fee < taker_fee),
+                "modes": {mode: definition.public()
+                          for mode, definition in execution_modes().items()},
+                "fee_floors": {
+                    mode: str(floor.fee_only_round_trip_bps)
+                    for mode, floor in fee_floors(
+                        maker_rate=maker_fee if maker_fee is not None else taker_fee,
+                        taker_rate=taker_fee).items()},
+                "fill_evidence": CANDLE_ONLY_UNCERTAIN,
+                "maker_fills_determined": False,
+                "research_only": True,
+                "production_authorised": False,
+                "cancel_implemented": False,
+                "production_mutations_added": 0,
+            },
+            "production_gap": {
+                "missing": [item.name for item in architecture_gap()
+                            if item.state == MISSING],
+                "partial": [item.name for item in architecture_gap()
+                            if item.state == PARTIAL],
+                "present": [item.name for item in architecture_gap()
+                            if item.state == PRESENT],
+                "production_mutations_required": [
+                    item.name for item in architecture_gap()
+                    if item.production_mutation_required],
             },
         }
 
