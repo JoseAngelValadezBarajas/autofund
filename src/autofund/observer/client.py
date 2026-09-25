@@ -20,6 +20,7 @@ from autofund.exchanges.bitso.auth import (
 from . import parsing
 from .errors import (
     AuthenticationUnavailable,
+    MarketDataInvalid,
     ReadOnlyViolation,
     ReadUnavailable,
     StrictReadOnlyLimitation,
@@ -28,6 +29,7 @@ from .models import (
     BookConstraints,
     MarketLimits,
     ObservedBalance,
+    OhlcCandle,
     OrderBookSnapshot,
     ShadowFee,
     Ticker,
@@ -36,7 +38,7 @@ from .models import (
 from .parsing import depth
 
 PRODUCTION_BASE_URL = "https://bitso.com"
-PUBLIC_ENDPOINTS = frozenset({"available_books", "order_book", "trades", "ticker"})
+PUBLIC_ENDPOINTS = frozenset({"available_books", "order_book", "trades", "ticker", "ohlc"})
 PRIVATE_ENDPOINTS = frozenset({"balance", "fees"})
 CONFIRMATION_MESSAGE = "Dedicated Bitso production read-only API key must be confirmed."
 
@@ -58,6 +60,8 @@ def validate_read(method: str, path: str, base_url: str = PRODUCTION_BASE_URL) -
         "trades": {"book", "limit", "marker", "sort"},
         "order_book": {"book", "aggregate"},
         "ticker": {"book"},
+        # OHLC is public historical candles: watched for real research backfill.
+        "ohlc": {"book", "time_bucket", "start", "end", "limit"},
     }.get(endpoint, set())
     if set(query) - allowed_query or any(len(v) != 1 for v in query.values()):
         raise ReadOnlyViolation("query outside read-only allowlist")
@@ -226,6 +230,26 @@ class BitsoProductionReadOnlyClient:
 
     def order_book(self, book: str) -> OrderBookSnapshot:
         return depth(self.read("order_book", {"book": book_name(book)}), book_name(book))
+
+    def ohlc(self, book: str, *, time_bucket: int = 60, start_ms: int | None = None,
+             end_ms: int | None = None, limit: int | None = None) -> tuple[OhlcCandle, ...]:
+        """Public historical candles. GET-only, no credentials, no session.
+
+        This is the real historical evidence source: it lets the same deterministic
+        strategy that would run live be evaluated over exchange-published candles,
+        instead of requiring weeks of local capture before any evidence exists.
+        """
+        if time_bucket <= 0:
+            raise MarketDataInvalid("time_bucket must be positive")
+        query: dict[str, str] = {"book": book_name(book), "time_bucket": str(time_bucket)}
+        if start_ms is not None:
+            query["start"] = str(int(start_ms))
+        if end_ms is not None:
+            query["end"] = str(int(end_ms))
+        if limit is not None:
+            query["limit"] = str(int(limit))
+        resolved = book_name(book)
+        return parsing.ohlc(self.read("ohlc", query), resolved)
 
     def balances(self) -> tuple[ObservedBalance, ...]:
         return parsing.balances(self.read("balance"))

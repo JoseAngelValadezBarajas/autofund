@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.1.4"
+PRODUCT_VERSION = "AutoFund MVP 0.2"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1189,6 +1189,131 @@ class AutoFundOrchestrator:
             "production_market_rotation": "DISABLED", "market_promotion": "DISABLED",
             "read_only": True, "execution_path_to_production": "NOT_PRESENT"}
 
+    def production_markets_view(self) -> dict[str, Any]:
+        """Production Markets contract: per-market evidence, certification and why.
+
+        Read-only and off the trading path. It reports the certification state, the
+        eligibility verdict and - crucially - a deterministic reason code for every
+        market that is not trading, so an operator is never shown an ambiguous "not
+        selected". It cannot activate a market, and multi-market Production stays
+        DISABLED until an operator authorises a session.
+
+        Multi-market Production remains disabled by policy in this milestone, so the
+        universe is reported as built and the selector as evaluated, but no intent is
+        ever created from this view.
+        """
+        from .certification import CERTIFICATION_VERSION, SELECTABLE_STATES
+        from .evidence import STORE_VERSION
+        from .profiles import classify_market
+        from .universe import SELECTOR_VERSION, UNIVERSE_VERSION
+
+        scanner = self._scanner
+        candidates = scanner.candidates if scanner is not None else ()
+        shadow = scanner.shadow if scanner is not None else {}
+        runner = self.runner
+        taker_fee = getattr(runner, "_taker_fee_rate", Decimal("0"))
+
+        markets: list[dict[str, Any]] = []
+        for candidate in candidates:
+            market = candidate.book.replace("_", "/").upper()
+            row = shadow.get(candidate.book) or {}
+            tier = row.get("certification_state") or "RESEARCH_ONLY"
+            markets.append({
+                "book": candidate.book,
+                "market": market,
+                "market_class": classify_market(candidate.book),
+                "research_status": candidate.status,
+                "strategy_compatibility": candidate.strategy_compatibility,
+                "evidence_provenance": row.get("data_source", "NONE"),
+                "closed_candles": row.get("candles", 0),
+                "evaluations": row.get("evaluations", 0),
+                "signals": row.get("signals", 0),
+                "shadow_round_trips": row.get("shadow_trades", 0),
+                "shadow_net_pnl_mxn": row.get("net_pnl_mxn", "0"),
+                "shadow_fees_mxn": row.get("fees_mxn", "0"),
+                "shadow_drawdown_mxn": row.get("max_drawdown_mxn", "0"),
+                "economic_reject_rate": row.get("economic_reject_rate", "0"),
+                "certification_state": tier,
+                "certified": tier in SELECTABLE_STATES,
+                "current_strategy_decision": row.get("decision", "NO_SIGNAL"),
+                "expected_net_edge_bps": row.get("expected_net_edge_bps"),
+                "production_eligible": (tier in SELECTABLE_STATES
+                                        and candidate.status == "ELIGIBLE"),
+                "position_status": ("POSITION_OPEN"
+                                    if self._market_has_position(market) else "NO_POSITION"),
+                "reason_code": self._market_reason_code(
+                    market=market, tier=tier, row=row, status=candidate.status),
+                "spread_bps": candidate.spread_bps,
+                "depth_mxn": candidate.depth_mxn,
+                "taker_fee": candidate.taker_fee,
+            })
+
+        return {
+            "research_version": SELECTOR_VERSION,
+            "certification_version": CERTIFICATION_VERSION,
+            "universe_version": UNIVERSE_VERSION,
+            "evidence_store_version": STORE_VERSION,
+            "promotion": "DISABLED",
+            "multi_market_production": "DISABLED",
+            "production_market": "btc_mxn",
+            "account_fee_confirmed": taker_fee > Decimal("0"),
+            "taker_fee_rate": str(taker_fee),
+            "markets": markets,
+            "certified_markets": [row["market"] for row in markets if row["certified"]],
+            "selectable_markets": [row["market"] for row in markets if row["production_eligible"]],
+            "selection_outcome": ("NO_TRADE" if not any(row["production_eligible"]
+                                                        for row in markets) else "CANDIDATE"),
+            "one_unresolved_order_globally": True,
+            "llm_influences_selection": False,
+        }
+
+    def _market_has_position(self, market: str) -> bool:
+        """Whether AutoFund owns inventory in a market. Never reads the exchange wallet."""
+        execution = getattr(self.runner, "execution", None)
+        if execution is None:
+            return False
+        try:
+            return market in execution.wallet.positions
+        except Exception:
+            return False
+
+    def _market_reason_code(self, *, market: str, tier: str, row: dict[str, Any],
+                            status: str) -> str:
+        """One deterministic reason a market is not trading, never an ambiguous blank.
+
+        Ordered so the *first* unmet requirement is reported, which is what an operator
+        needs to act on. The vocabulary matches the selector's, so the UI and the
+        selector can never disagree about why nothing was chosen.
+        """
+        from .universe import (
+            REASON_ALREADY_HOLDING,
+            REASON_ECONOMIC_GUARD_REJECT,
+            REASON_INSUFFICIENT_EVIDENCE,
+            REASON_NO_MARKET_DATA,
+            REASON_NO_SIGNAL,
+            REASON_NOT_CERTIFIED,
+            REASON_NOT_VIABLE,
+            REASON_STALE_DATA,
+        )
+
+        if status != "ELIGIBLE":
+            return REASON_NO_MARKET_DATA
+        if self._market_has_position(market):
+            return REASON_ALREADY_HOLDING
+        if tier == "NOT_VIABLE":
+            return REASON_NOT_VIABLE
+        if tier in ("INSUFFICIENT_EVIDENCE", "ACCUMULATING_EVIDENCE", "RESEARCH_ONLY"):
+            return (REASON_NOT_CERTIFIED if tier == "RESEARCH_ONLY"
+                    else REASON_INSUFFICIENT_EVIDENCE)
+        if tier == "SUSPENDED":
+            return REASON_STALE_DATA
+        if row.get("decision") != "BUY":
+            return REASON_NO_SIGNAL
+        net_edge = row.get("expected_net_edge_bps")
+        if net_edge is None or Decimal(str(net_edge)) <= Decimal("0"):
+            return REASON_ECONOMIC_GUARD_REJECT
+        return "CURRENT_OPPORTUNITY"
+
     def learning_view(self) -> dict[str, Any]:
         scanner = self._scanner.scanner_evidence() if self._scanner is not None else None
         return dict(self.adaptive.learning_view(scanner=scanner))
@@ -1341,6 +1466,7 @@ class AutoFundOrchestrator:
                     "learning": self.learning_view(),
                     "scanner": self.scanner_evidence(),
                     "strategy_research": self.strategy_research_view(),
+                    "production_markets": self.production_markets_view(),
                     "candles": observability.candles(),
                     "metrics": observability.metrics(),
                     "champion": {**asdict(self.adaptive.champion), "fingerprint": self.adaptive.champion.fingerprint},

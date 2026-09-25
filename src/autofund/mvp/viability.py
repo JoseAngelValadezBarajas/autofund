@@ -142,13 +142,20 @@ def assess_viability(*, proposal: StrategyProposal, budget_mxn: Decimal,
                      taker_fee_rate: Decimal, spread_bps: Decimal,
                      bids: tuple[Any, ...], asks: tuple[Any, ...],
                      policy: EconomicPolicy, compatibility: str = RESEARCH_ONLY,
+                     slippage_bps: Decimal | None = None,
                      evidence_count: int = 0) -> ViabilityAssessment:
     """Full economic assessment of one proposal on one market.
 
     The entry/exit prices are the profile's own references, and fees are applied
     exactly as the account charges them: the buy fee reduces owned quantity and the
-    sell fee reduces proceeds. Slippage and spread are estimated from the observed
-    book for this order size.
+    sell fee reduces proceeds.
+
+    Slippage comes from walking the observed book for this order size. When `bids` and
+    `asks` are empty -- historical evaluation, where the exchange publishes no
+    historical depth -- the caller must supply `slippage_bps` explicitly, because a
+    book-less walk would return an unexecutable order and sink the evaluation for a
+    reason that has nothing to do with the strategy. That assumption is then recorded
+    on the assessment so it cannot pass as a measurement.
     """
     entry_price = proposal.entry_reference_mxn
     exit_price = proposal.expected_exit_reference_mxn
@@ -163,15 +170,27 @@ def assess_viability(*, proposal: StrategyProposal, budget_mxn: Decimal,
             slippage=None, policy=policy, target_model=proposal.target_model,
             evidence_count=evidence_count, notes=("NO_EXECUTABLE_REFERENCE_PRICE",))
 
-    walk = estimate_round_trip(bids=bids, asks=asks, notional_mxn=budget_mxn)
+    has_book = bool(bids) and bool(asks)
+    if has_book:
+        walk = estimate_round_trip(bids=bids, asks=asks, notional_mxn=budget_mxn)
+        entry_slippage_bps = walk.entry_slippage_bps
+        exit_slippage_bps = walk.exit_slippage_bps
+        slippage_cost = walk.total_slippage_mxn
+    else:
+        if slippage_bps is None:
+            raise ValueError("MODELLED_SLIPPAGE_REQUIRED_WITHOUT_OBSERVED_BOOK")
+        walk = None
+        # Modelled for both legs, matching how a round-trip book walk would apply it.
+        entry_slippage_bps = slippage_bps
+        exit_slippage_bps = slippage_bps
+        slippage_cost = budget_mxn * (slippage_bps + slippage_bps) / BPS
+
     notes: list[str] = []
-    if not walk.executable:
+    if not has_book:
+        notes.append("SLIPPAGE_MODELLED_NO_HISTORICAL_DEPTH_PUBLISHED")
+    elif not walk or not walk.executable:
         notes.append("DEPTH_INSUFFICIENT_FOR_STRESSED_ORDER_SIZE")
 
-    # Slippage changes the prices actually achieved, so it is folded into the
-    # economics rather than reported alongside them and ignored.
-    entry_slippage_bps = walk.entry_slippage_bps
-    exit_slippage_bps = walk.exit_slippage_bps
     round_trip_slippage_bps = entry_slippage_bps + exit_slippage_bps
 
     model = economic_entry_model(
@@ -185,14 +204,14 @@ def assess_viability(*, proposal: StrategyProposal, budget_mxn: Decimal,
     exit_fee = model.expected_exit_fee_mxn
     friction = FrictionBreakdown(
         notional_mxn=budget_mxn, entry_fee_mxn=entry_fee, exit_fee_mxn=exit_fee,
-        spread_cost_mxn=spread_cost, slippage_cost_mxn=walk.total_slippage_mxn)
+        spread_cost_mxn=spread_cost, slippage_cost_mxn=slippage_cost)
 
     gross_bps = proposal.expected_gross_edge_bps
     required_bps = friction.total_bps + policy.minimum_net_edge_bps
     margin_bps = gross_bps - required_bps
     net_bps = model.expected_net_edge_bps
 
-    if not walk.executable:
+    if walk is not None and not walk.executable:
         status, reason = NOT_VIABLE, DEPTH_INSUFFICIENT
     elif gross_bps <= friction.total_bps:
         status, reason = NOT_VIABLE, FRICTION_EXCEEDS_TARGET

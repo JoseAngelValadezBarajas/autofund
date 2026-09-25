@@ -180,31 +180,51 @@ class TrendContinuationV1:
 
     Rationale: mean reversion's ceiling is the distance back to the mean, which is
     small exactly when the market is calm. Trend continuation's ceiling is the
-    continuation of a move already larger than recent noise, so it can target
-    moves that exceed round-trip cost.
+    continuation of a move already larger than recent noise, so it can target moves
+    that exceed round-trip cost.
 
     Entry requires *two* independent confirmations, so a single noisy candle cannot
     trigger it:
       1. price is above the fast mean by more than `momentum_threshold_bps`;
       2. the fast mean is itself above the slow mean (direction is established).
 
-    Target = entry + target_model(volatility), so the intended move scales with
-    observed volatility rather than being a fixed number.
+    Exit is the profit target or a **volatility-bounded stop below the fast mean**.
+
+    The stop sitting strictly below the fast mean is not a detail. Entry requires price
+    to be *above* the fast mean, so an exit that fired at the fast mean would be
+    violated the instant the position opened, and would close on ordinary noise for a
+    guaranteed loss after two fees. The stop distance is volatility-scaled and bounded
+    on both sides, so it is wide in a volatile market and never degenerate in a calm one.
     """
 
     fast_window: int = 8
     slow_window: int = 21
     momentum_threshold_bps: Decimal = Decimal("25")
+    stop_atr_multiple: Decimal = Decimal("1.5")
+    stop_floor_bps: Decimal = Decimal("30")
+    stop_cap_bps: Decimal = Decimal("400")
     min_history: int = 21
     expected_holding_horizon: int = 60
     target_model: TargetModel = TREND_TARGET_MODEL
 
     identity = ProfileIdentity(
-        profile_id="trend-continuation-v1", strategy_id="trend_continuation", version="0.1",
+        profile_id="trend-continuation-v1", strategy_id="trend_continuation", version="0.2",
         parameters=(("fast_window", "8"), ("slow_window", "21"),
                     ("momentum_threshold_bps", "25"), ("min_history", "21"),
-                    ("expected_holding_horizon", "60")),
+                    ("expected_holding_horizon", "60"), ("stop_atr_multiple", "1.5"),
+                    ("stop_floor_bps", "30"), ("stop_cap_bps", "400")),
         target_model=TREND_TARGET_MODEL)
+
+    @financial
+    def stop_distance_bps(self, features: VolatilityFeatures) -> Decimal:
+        """Volatility-scaled stop distance, floored and capped.
+
+        Bounded on both sides for the same reason the target is: an unbounded multiple
+        would be pushed to an extreme by one volatile sample, and an unfloored one would
+        be tighter than the spread in a calm market.
+        """
+        raw = features.atr_bps * self.stop_atr_multiple
+        return min(max(raw, self.stop_floor_bps), self.stop_cap_bps)
 
     @financial
     def propose(self, *, candles: Sequence[Candle], quantity: Decimal = ZERO,
@@ -222,7 +242,8 @@ class TrendContinuationV1:
                 target_model=self.target_model,
                 confidence_evidence={"fast_window": str(self.fast_window),
                                      "slow_window": str(self.slow_window),
-                                     "momentum_threshold_bps": str(self.momentum_threshold_bps)},
+                                     "momentum_threshold_bps": str(self.momentum_threshold_bps),
+                                     "stop_distance_bps": str(self.stop_distance_bps(features))},
                 features=features, closed_candle_count=len(candles),
                 position_open=quantity > ZERO)
 
@@ -239,12 +260,11 @@ class TrendContinuationV1:
         close = closes[-1]
 
         if quantity > ZERO and cost_basis_mxn > ZERO:
-            # A trend profile exits on trend failure, not on a fixed profit. It
-            # must persist the same rule it opened with, so the exit is symmetric
-            # with the entry condition that justified the position.
             average_cost = cost_basis_mxn / quantity
             target = self.target_model.target_price_mxn(average_cost, features)
-            if close <= fast or close >= target:
+            # Strictly below the fast mean, so entry cannot immediately violate the stop.
+            stop = fast * (ONE - self.stop_distance_bps(features) / BPS)
+            if close <= stop or close >= target:
                 return build(DECISION_SELL, SIGNAL_SELL, close, target, features)
             return build(DECISION_NO_SIGNAL, EXIT_CONDITION_NOT_MET, close, target, features)
 

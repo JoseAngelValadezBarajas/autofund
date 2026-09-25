@@ -387,6 +387,7 @@ def replay_candles(*, candles: tuple[Candle, ...], profile_id: str, market: str,
                    evaluator: Any, taker_fee_rate: Decimal, spread_bps: Decimal,
                    bids: tuple[Any, ...], asks: tuple[Any, ...], budget_mxn: Decimal,
                    policy: EconomicPolicy, compatibility: str = COMPATIBLE,
+                   slippage_bps: Decimal = ZERO,
                    initial_equity_mxn: Decimal = Decimal("50")) -> ProfileReplayResult:
     """Replay one profile over one candle series, past-only and deterministically.
 
@@ -435,7 +436,7 @@ def replay_candles(*, candles: tuple[Candle, ...], profile_id: str, market: str,
             assessment = assess_viability(
                 proposal=proposal, budget_mxn=budget_mxn, taker_fee_rate=taker_fee_rate,
                 spread_bps=spread_bps, bids=bids, asks=asks, policy=policy,
-                compatibility=compatibility)
+                compatibility=compatibility, slippage_bps=slippage_bps)
             observed_frictions.append(assessment.friction.total_bps)
             if not assessment.viable:
                 # EconomicEdgeGuard refuses: no intent, no position. This is the

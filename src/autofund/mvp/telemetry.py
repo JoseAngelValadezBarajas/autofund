@@ -29,6 +29,11 @@ CHECKPOINTS = frozenset({
     "RECONCILIATION_PROBE",
     "ECONOMIC_EDGE_EVALUATED", "ECONOMIC_EDGE_PASS", "ECONOMIC_EDGE_REJECT",
     "ECONOMIC_EXIT_EVALUATED", "ECONOMIC_EXIT_PASS", "ECONOMIC_EXIT_REJECT",
+    # 0.2 market selection and certification.
+    "MARKET_SELECTION_STARTED", "MARKET_CANDIDATE_EVALUATED", "MARKET_SELECTED",
+    "MARKET_SELECTION_NO_TRADE", "MARKET_CERTIFICATION_UPDATED",
+    "MARKET_CERTIFICATION_SUSPENDED", "FIRST_REAL_DYNAMIC_MARKET_ORDER",
+    "MARKET_EVIDENCE_INGESTED", "MARKET_EVIDENCE_DUPLICATE_REJECTED",
 })
 SECRET_KEYS = {"api_key", "api_secret", "authorization", "control_token", "token"}
 
@@ -106,7 +111,7 @@ class SessionTelemetry:
                       "ended_at": ended.isoformat().replace("+00:00", "Z"),
                       "stop_reason": stop_reason, **(time_facts or {})}
         identity_block = {"session_id": self.session_id, "run_id": self.run_id,
-                          "product_version": "AutoFund MVP 0.1.4",
+                          "product_version": "AutoFund MVP 0.2",
                           "strategy_version": self.strategy_version, **(identity or {})}
         scanner = scanner_evidence(rows)
         facts_with_latency = {**facts, "largest_latency_ms": round(largest, 3)}

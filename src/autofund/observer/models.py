@@ -229,3 +229,31 @@ class OrderBookSnapshot:
     @property
     def fingerprint(self) -> str:
         return fingerprint(self)
+
+
+@dataclass(frozen=True, slots=True)
+class OhlcCandle:
+    """One public OHLC bucket, as the exchange published it.
+
+    `bucket_ms` is the exchange's own bucket identifier and is the authoritative
+    time key: it is preserved verbatim so a candle cannot be silently re-labelled by
+    a local clock. `opened_at` is derived from it purely for readability, and the
+    replay layer uses `bucket_ms` for ordering, gap detection and deduplication.
+
+    There is no future data in a bucket: `bucket_start_time` is the start of the
+    interval, so a candle labelled T is fully known at T + the bucket duration and
+    never before.
+    """
+
+    book: str
+    bucket_ms: int
+    opened_at: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+
+    @property
+    def fingerprint(self) -> str:
+        return fingerprint(self)

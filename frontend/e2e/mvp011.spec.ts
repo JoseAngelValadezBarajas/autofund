@@ -123,6 +123,33 @@ test('strategy research shows profile economics and refuses to promote anything'
   expect(errors).toEqual([]);
 });
 
+test('production markets explains why each market is not trading',async({page})=>{
+  const external:string[]=[],mutations:string[]=[],errors:string[]=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
+  page.on('request',r=>{
+    if(!r.url().startsWith(BASE)&&!r.url().startsWith('data:'))external.push(r.url());
+    if(['POST','PUT','PATCH','DELETE'].includes(r.method()))mutations.push(r.method()+' '+new URL(r.url()).pathname);
+  });
+  await page.goto(BASE+'/');
+  await page.getByRole('button',{name:'Markets'}).click();
+
+  await expect(page.getByRole('heading',{name:'Production markets'})).toBeVisible();
+  // Production remains single-market and promotion stays off in this milestone.
+  await expect(page.getByText(/Multi-market Production DISABLED/)).toBeVisible();
+  await expect(page.getByText(/Promotion DISABLED/)).toBeVisible();
+  // The page must state that no language model influences selection.
+  await expect(page.getByText(/No language model/)).toBeVisible();
+  // Certification is per market and profile, never presented as global.
+  await expect(page.getByText(/market and profile pair/)).toBeVisible();
+  // No trading or promotion control may exist here.
+  for(const name of ['BUY','SELL','PROMOTE','ACTIVATE','ENABLE MARKET','FORCE TRADE'])
+    await expect(page.getByRole('button',{name})).toHaveCount(0);
+  expect(mutations).toEqual([]);
+  expect(external).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('scanner page never exposes an automatic market promotion control',async({page})=>{
   await page.goto(BASE+'/');
   await page.getByRole('button',{name:'Scanner'}).click();

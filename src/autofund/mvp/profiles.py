@@ -385,15 +385,27 @@ class ProfileIdentity:
 
 
 def base_is_stable_or_fiat(book: str) -> bool:
-    """Whether a book's base asset is a stablecoin or fiat-like instrument."""
-    base = book.split("_", 1)[0].lower() if "_" in book else book.lower()
+    """Whether a book's base asset is a stablecoin or fiat-like instrument.
+
+    Accepts either form -- `usd_mxn` or `USD/MXN` -- because a caller that passes the
+    wrong form must not silently get a different answer. Returning False for
+    `USD/MXN` would classify a fiat pair as volatile crypto and let it into a
+    strategy universe it does not belong in, which is exactly the failure this
+    predicate exists to prevent.
+    """
+    text = book.replace("/", "_").lower()
+    base = text.split("_", 1)[0] if "_" in text else text
     return base in STABLE_OR_FIAT_BASES
 
 
 def classify_market(book: str) -> str:
-    """Deterministic market class, used to exclude fiat-like books from research."""
-    parts = book.split("_")
-    if len(parts) != 2:
+    """Deterministic market class, used to exclude fiat-like books from research.
+
+    Normalises `BASE/QUOTE` and `base_quote` to one form so the two spellings can
+    never disagree about an instrument's class.
+    """
+    parts = book.replace("/", "_").split("_")
+    if len(parts) != 2 or not all(parts):
         return CLASS_UNKNOWN
     return CLASS_STABLE_OR_FIAT if base_is_stable_or_fiat(book) else CLASS_VOLATILE_CRYPTO
 

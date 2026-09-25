@@ -545,7 +545,7 @@ class LiveExecution:
 
     @financial
     def public(self) -> dict[str, Any]:
-        position = self.wallet.positions.get("BTC/MXN")
+        positions = self._all_positions()
         fills = tuple(self.accounting.processed_fill_ids.values())
         buys = tuple(fill for fill in fills if fill.side is Side.BUY)
         sells = tuple(fill for fill in fills if fill.side is Side.SELL)
@@ -562,12 +562,21 @@ class LiveExecution:
             minor = sum((fill.minor_value for fill in rows), Decimal("0"))
             return {"quantity": major, "value_mxn": minor,
                     "vwap": minor / major if major else None}
+        # Legacy BTC/MXN projections are preserved so existing consumers (the MVP
+        # orchestrator, the live dashboard, the recovery scripts) keep working
+        # unchanged. They are derived from the multi-asset view rather than being a
+        # separate BTC-only code path, so the two cannot disagree.
+        btc = positions.get("BTC/MXN")
         return {"mode": "MICRO-LIVE", "real_money": True, "auto_execution": "DISABLED",
                 "allocated_capital": self.config.allocated_capital,
                 "max_deployment_mxn": self.config.allocated_capital * self.config.max_deployment,
                 "single_order_cap": self.config.single_order_cap, "cash_mxn": self.wallet.cash_mxn,
-                "inventory_btc": position.quantity if position else Decimal("0"),
-                "cost_basis_mxn": position.cost_basis_mxn if position else Decimal("0"),
+                "inventory_btc": btc.quantity if btc else Decimal("0"),
+                "cost_basis_mxn": btc.cost_basis_mxn if btc else Decimal("0"),
+                "positions": positions,
+                "deployed_mxn": sum(
+                    (position.cost_basis_mxn for position in positions.values()),
+                    Decimal("0")),
                 "realized_pnl_mxn": net_realized,
                 "gross_realized_pnl_mxn": net_realized + sell_fees_mxn,
                 "fees_mxn": fees_mxn, "ledger": self.wallet.ledger,
@@ -577,6 +586,7 @@ class LiveExecution:
                 "reconciliation_state": "PASS" if not self.unresolved else "BLOCKED",
                 "unresolved_orders": self.unresolved,
                 "orders": [{"origin_id": key, "state": state, "oid": self.oids.get(key),
+                            "book": str(self.intents.get(key, {}).get("book", "")),
                             "recovery_state": (
                                 "RECONCILED" if state == "RECONCILED" else
                                 "PARTIALLY_FILLED_RECOVERED" if state == "PARTIALLY_FILLED" else
@@ -584,3 +594,13 @@ class LiveExecution:
                                 "CONTRADICTORY_REMOTE_STATE" if self.state_metadata.get(key, {}).get("reason") == "CONTRADICTORY_REMOTE_STATE" else
                                 "POST_OUTCOME_UNKNOWN")}
                            for key, state in self.states.items()]}
+
+    def _all_positions(self) -> dict[str, Any]:
+        """Every AutoFund-owned position, across all markets.
+
+        AutoFund inventory is derived only from AutoFund's own confirmed fills, never
+        from the exchange wallet balance. That distinction is what keeps an unrelated
+        account holding of the same asset from being sold: the wallet is read-only
+        account state, and the position map is the accounting truth.
+        """
+        return dict(self.wallet.positions)

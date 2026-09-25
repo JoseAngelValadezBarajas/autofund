@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
@@ -14,6 +14,7 @@ from .models import (
     Level,
     MarketLimits,
     ObservedBalance,
+    OhlcCandle,
     OrderBookSnapshot,
     PublicTrade,
     ShadowFee,
@@ -205,3 +206,40 @@ def depth(payload: object, book: str) -> OrderBookSnapshot:
         sides[0],
         sides[1],
     )
+
+
+def ohlc(payload: object, book: str) -> tuple[OhlcCandle, ...]:
+    """Parse the public OHLC series into an immutable, chronologically sorted tuple.
+
+    Bitso returns `bucket_start_time` in epoch milliseconds and OHLC as strings.
+    Every value is parsed through the Decimal-only path, and the series is returned
+    sorted and duplicate-free so a caller cannot accidentally replay it out of
+    chronological order. A duplicate bucket is an exchange-side inconsistency and is
+    rejected rather than silently deduplicated, because silently dropping a bucket
+    would change what a replay observed.
+    """
+    candles: list[OhlcCandle] = []
+    seen: set[int] = set()
+    for value in array(payload):
+        row = obj(value)
+        bucket = integer(row.get("bucket_start_time"))
+        if bucket in seen:
+            raise MarketDataInvalid("duplicate OHLC bucket")
+        seen.add(bucket)
+        opened = number(row.get("first_rate"))
+        high = number(row.get("max_rate"))
+        low = number(row.get("min_rate"))
+        close = number(row.get("last_rate"))
+        if min(opened, high, low, close) <= 0:
+            raise MarketDataInvalid("nonpositive OHLC price")
+        if not low <= opened <= high or not low <= close <= high:
+            raise MarketDataInvalid("OHLC values outside low/high bounds")
+        volume = number(row.get("volume")) if row.get("volume") is not None else Decimal("0")
+        if volume < 0:
+            raise MarketDataInvalid("negative OHLC volume")
+        candles.append(OhlcCandle(
+            book=book, bucket_ms=bucket,
+            opened_at=datetime.fromtimestamp(bucket / 1000, tz=UTC),
+            open=opened, high=high, low=low, close=close, volume=volume))
+    candles.sort(key=lambda candle: candle.bucket_ms)
+    return tuple(candles)
