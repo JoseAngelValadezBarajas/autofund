@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.1.3"
+PRODUCT_VERSION = "AutoFund MVP 0.1.4"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1193,6 +1193,74 @@ class AutoFundOrchestrator:
         scanner = self._scanner.scanner_evidence() if self._scanner is not None else None
         return dict(self.adaptive.learning_view(scanner=scanner))
 
+    def strategy_research_view(self) -> dict[str, Any]:
+        """Strategy Research contract for the Learning/Scanner UI.
+
+        Read-only and off the trading path: it reports the profile registry, each
+        profile's declared markets, and the current shadow evidence. It cannot
+        activate a profile, and it never touches capital or the Champion.
+
+        The champion's own economic verdict is computed here so an operator can see
+        *why* its BUYs are refused at the real fee, rather than inferring it.
+        """
+        from .economics import DEFAULT_POLICY
+        from .profile_library import PROFILE_BY_ID, PROFILE_REGISTRY
+        from .profiles import PROMOTION, classify_market
+        from .research import SELECTOR_CONTRACT_VERSION
+        from .viability import minimum_viable_gross_edge_bps
+
+        runner = self.runner
+        taker_fee = getattr(runner, "_taker_fee_rate", Decimal("0"))
+        preflight = getattr(runner, "last_preflight", None)
+        spread_bps = Decimal("0")
+        if preflight is not None:
+            try:
+                spread_bps = preflight.depth.spread_bps
+            except Exception:
+                spread_bps = Decimal("0")
+        floor_bps = (minimum_viable_gross_edge_bps(taker_fee_rate=taker_fee,
+                                                  spread_bps=spread_bps,
+                                                  policy=DEFAULT_POLICY)
+                     if taker_fee > Decimal("0") else None)
+        profiles: list[dict[str, Any]] = []
+        for definition in PROFILE_REGISTRY:
+            profiles.append({
+                **definition.public(),
+                "markets_certified": sorted(definition.markets),
+                "lifecycle": ("ACTIVE_PRODUCTION"
+                              if definition.markets == frozenset({"btc_mxn"})
+                              else "RESEARCH"),
+            })
+        champion = self.adaptive.champion
+        champion_intended_bps = Decimal("20")
+        return {
+            "research_version": SELECTOR_CONTRACT_VERSION,
+            "promotion": PROMOTION,
+            "multi_market_production": "DISABLED",
+            "champion": {"profile_id": champion.profile_id, "strategy_id": champion.strategy_id,
+                        "version": champion.version, "fingerprint": champion.fingerprint,
+                        "certification_status": champion.certification_status,
+                        "lifecycle": "ACTIVE_PRODUCTION",
+                        "intended_gross_edge_bps": str(champion_intended_bps)},
+            "profiles": profiles,
+            "economic_viability": {
+                "taker_fee_rate": str(taker_fee),
+                "spread_bps": str(spread_bps),
+                "account_fee_confirmed": taker_fee > Decimal("0"),
+                "minimum_viable_gross_edge_bps": None if floor_bps is None else str(floor_bps),
+                "champion_intended_gross_edge_bps": str(champion_intended_bps),
+                "champion_economically_viable": (None if floor_bps is None
+                                                 else champion_intended_bps > floor_bps),
+            },
+            "markets": [{"market": item.book, "status": item.status,
+                         "strategy_compatibility": item.strategy_compatibility,
+                         "market_class": classify_market(item.book.replace("_", "/").upper()),
+                         "lifecycle": item.lifecycle}
+                        for item in (self._scanner.candidates if self._scanner else ())],
+            "shadow": list(self._scanner.shadow.values()) if self._scanner is not None else [],
+            "profile_by_id": sorted(PROFILE_BY_ID),
+        }
+
     def readiness(self) -> dict[str, Any]:
         """Production readiness as shown before START; never invents a preflight."""
         readiness = dict(self.runner.production_preflight())
@@ -1272,6 +1340,7 @@ class AutoFundOrchestrator:
                     "strategy": observability.strategy(),
                     "learning": self.learning_view(),
                     "scanner": self.scanner_evidence(),
+                    "strategy_research": self.strategy_research_view(),
                     "candles": observability.candles(),
                     "metrics": observability.metrics(),
                     "champion": {**asdict(self.adaptive.champion), "fingerprint": self.adaptive.champion.fingerprint},

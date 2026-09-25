@@ -1,8 +1,9 @@
 import {useEffect,useState} from 'react';
 import {LiveActivityPage,LiveMarketPage,LiveOperatorView,LiveTelemetryPage,type MvpObservability,useTicker} from './LiveOperator';
 import {LearningPage,MarketScannerPage,type LearningView,type ScannerEvidence} from './MarketScanner';
+import {StrategyResearchPage,type StrategyResearchView} from './StrategyResearch';
 
-type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];wallet?:{status:string;error?:string|null;read_only:boolean;balances:{currency:string;total:string;available:string;locked:string;approx_mxn:string|null}[]};execution?:any;production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];signals?:MvpObservability['signals'];economics?:EconomicExitView;blocked_recovery?:MvpObservability['blocked_recovery'];runtime_gaps?:MvpObservability['runtime_gaps'];monitored_seconds?:number|null;session?:MvpObservability['session']&{started_at?:string|null;ended_at?:string|null;actual_runtime_seconds?:number|null;stop_reason?:string|null;frozen?:boolean};learning?:LearningView;scanner?:ScannerEvidence};
+type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];wallet?:{status:string;error?:string|null;read_only:boolean;balances:{currency:string;total:string;available:string;locked:string;approx_mxn:string|null}[]};execution?:any;production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];signals?:MvpObservability['signals'];economics?:EconomicExitView;blocked_recovery?:MvpObservability['blocked_recovery'];runtime_gaps?:MvpObservability['runtime_gaps'];monitored_seconds?:number|null;session?:MvpObservability['session']&{started_at?:string|null;ended_at?:string|null;actual_runtime_seconds?:number|null;stop_reason?:string|null;frozen?:boolean};learning?:LearningView;scanner?:ScannerEvidence;strategy_research?:StrategyResearchView};
 
 /**
  * 0.1.3 fee-aware economic exit model for the open AutoFund position.
@@ -47,7 +48,7 @@ function EconomicExitPanel({economics}:{economics:EconomicExitView}){
   </>
 }
 
-const pages=['Overview','Market','Activity','Wallet','Positions','Ledger','Sessions','Learning','Telemetry','System','Scanner'];
+const pages=['Overview','Market','Activity','Wallet','Positions','Ledger','Sessions','Learning','Profiles','Telemetry','System','Scanner'];
 
 /** True when the backend published a real live observability model. */
 function live(data:Snapshot):MvpObservability|null{
@@ -186,6 +187,8 @@ export function MvpApp({initial}:{initial:Snapshot}){
       {page==='Scanner'&&(data.scanner
         ?<MarketScannerPage scanner={data.scanner}/>
         :<article><h2>Market opportunity scanner</h2><p>Scanner evidence unavailable.</p></article>)}
+
+      {page==='Profiles'&&<StrategyResearchPage research={data.strategy_research}/>}
 
       {page==='Telemetry'&&(model
         ?<LiveTelemetryPage model={model} now={now}/>

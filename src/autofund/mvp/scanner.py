@@ -322,36 +322,83 @@ class MarketScanner:
 
         No candidate market can reach the Production ExecutionEngine: this records
         research evidence only and never creates an order intent.
+
+        Intent alone is not evidence, so each candidate is seeded with the real
+        series availability for its market. A market with no captured candles is
+        recorded as awaiting data rather than appearing as an evaluated zero, and a
+        market whose series was supplied is evaluated by `shadow_research` through
+        `record_shadow_evaluation`.
         """
         top = [item for item in self.candidates if item.status == ELIGIBLE][:self.max_shadow_candidates]
         for candidate in top:
             emit("MARKET_SHADOW_STARTED", component="scanner", message=candidate.book,
                  market=candidate.book, score=candidate.score,
                  strategy_compatibility=candidate.strategy_compatibility)
-        self.shadow = {item.book: {"market": item.book, "candles": 0, "evaluations": 0, "signals": 0,
-                                   "entries": 0, "exits": 0, "gross_pnl_mxn": "0", "net_pnl_mxn": "0",
-                                   "max_drawdown_mxn": "0", "estimated_fees_mxn": "0",
-                                   "estimated_slippage_mxn": "0", "signal_rate": "0",
-                                   "strategy_compatibility": item.strategy_compatibility,
-                                   "lifecycle": "RESEARCH_ONLY",
-                                   "evidence_count": 0} for item in top}
+        self.shadow = {
+            item.book: {"market": item.book, "candles": 0, "evaluations": 0, "signals": 0,
+                        "entries": 0, "exits": 0, "shadow_trades": 0, "gross_pnl_mxn": "0",
+                        "net_pnl_mxn": "0", "fees_mxn": "0", "slippage_mxn": "0",
+                        "max_drawdown_mxn": "0", "estimated_fees_mxn": "0",
+                        "estimated_slippage_mxn": "0", "signal_rate": "0",
+                        "economic_reject_rate": "0", "data_source": "AWAITING_CANDLE_DATA",
+                        "evaluated": False,
+                        "strategy_compatibility": item.strategy_compatibility,
+                        "lifecycle": "RESEARCH_ONLY",
+                        "evidence_count": 0} for item in top}
+
+    def record_shadow_evaluation(self, market: str, *, candles: int, evaluations: int,
+                                 signals: int, shadow_trades: int = 0, gross_pnl_mxn: str = "0",
+                                 fees_mxn: str = "0", slippage_mxn: str = "0",
+                                 net_pnl_mxn: str = "0", max_drawdown_mxn: str = "0",
+                                 economic_reject_rate: str = "0", data_source: str = "CAPTURED",
+                                 profiles: list[dict[str, Any]] | None = None,
+                                 telemetry: Any = None) -> dict[str, Any]:
+        """Record a real shadow evaluation result for one research market.
+
+        This is how `shadow_evaluations` becomes a measurement instead of a zero.
+        Only genuine evaluations are recorded: the caller supplies counts produced
+        by actually replaying a candle series, so a market with no data is never
+        counted here.
+        """
+        with self._lock:
+            row = self.shadow.setdefault(market, {
+                "market": market, "strategy_compatibility": strategy_compatibility(market),
+                "lifecycle": "RESEARCH_ONLY", "evidence_count": 0})
+            row.update({
+                "candles": candles, "evaluations": evaluations, "signals": signals,
+                "entries": shadow_trades, "exits": shadow_trades,
+                "shadow_trades": shadow_trades, "gross_pnl_mxn": gross_pnl_mxn,
+                "fees_mxn": fees_mxn, "slippage_mxn": slippage_mxn,
+                "estimated_fees_mxn": fees_mxn, "estimated_slippage_mxn": slippage_mxn,
+                "net_pnl_mxn": net_pnl_mxn, "max_drawdown_mxn": max_drawdown_mxn,
+                "economic_reject_rate": economic_reject_rate,
+                "signal_rate": (str(Decimal(signals) / Decimal(evaluations))
+                                if evaluations else "0"),
+                "data_source": data_source, "evaluated": True,
+                "profiles": list(profiles or []),
+                "evidence_count": int(row.get("evidence_count", 0)) + 1})
+            if telemetry is not None:
+                telemetry("MARKET_SHADOW_EVALUATED", component="scanner", message=market,
+                          market=market, candles=candles, evaluations=evaluations,
+                          signals=signals, shadow_trades=shadow_trades,
+                          gross_pnl_mxn=gross_pnl_mxn, net_pnl_mxn=net_pnl_mxn,
+                          economic_reject_rate=economic_reject_rate,
+                          data_source=data_source,
+                          strategy_compatibility=row["strategy_compatibility"],
+                          profiles=list(profiles or []))
+            return dict(row)
 
     def observe_shadow(self, book: str, *, candles: int, evaluations: int, signals: int,
                        net_pnl_mxn: str = "0", telemetry: Any = None) -> dict[str, Any]:
-        """Record shadow evaluation progress for one research candidate."""
-        with self._lock:
-            row = self.shadow.setdefault(book, {"market": book, "strategy_compatibility":
-                                                strategy_compatibility(book), "lifecycle": "RESEARCH_ONLY",
-                                                "evidence_count": 0})
-            row.update({"candles": candles, "evaluations": evaluations, "signals": signals,
-                        "signal_rate": str(Decimal(signals) / Decimal(evaluations)) if evaluations else "0",
-                        "net_pnl_mxn": net_pnl_mxn, "evidence_count": row.get("evidence_count", 0) + 1})
-            if telemetry is not None:
-                telemetry("MARKET_SHADOW_EVALUATED", component="scanner", message=book, market=book,
-                          candles=candles, evaluations=evaluations, signals=signals,
-                          net_pnl_mxn=net_pnl_mxn,
-                          strategy_compatibility=row["strategy_compatibility"])
-            return dict(row)
+        """Record shadow evaluation progress for one research candidate.
+
+        Retained for existing callers; delegates to `record_shadow_evaluation` so
+        there is one code path that can mark a market as genuinely evaluated.
+        """
+        return self.record_shadow_evaluation(
+            book, candles=candles, evaluations=evaluations, signals=signals,
+            net_pnl_mxn=net_pnl_mxn, telemetry=telemetry)
+
 
     # ---------------------------------------------------------------- output
     def evidence(self) -> dict[str, Any]:

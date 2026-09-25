@@ -93,6 +93,36 @@ test('postmortem, learning and scanner surfaces are visible without Production t
   expect(errors).toEqual([]);
 });
 
+test('strategy research shows profile economics and refuses to promote anything',async({page},testInfo)=>{
+  const external:string[]=[],mutations:string[]=[],errors:string[]=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
+  page.on('request',r=>{
+    if(!r.url().startsWith(BASE)&&!r.url().startsWith('data:'))external.push(r.url());
+    if(['POST','PUT','PATCH','DELETE'].includes(r.method()))mutations.push(r.method()+' '+new URL(r.url()).pathname);
+  });
+  await page.goto(BASE+'/');
+  await page.getByRole('button',{name:'Profiles'}).click();
+
+  await expect(page.getByRole('heading',{name:'Strategy research'})).toBeVisible();
+  // Promotion and multi-market Production must be visibly disabled.
+  await expect(page.getByText(/Promotion DISABLED/)).toBeVisible();
+  await expect(page.getByText(/Multi-market Production DISABLED/)).toBeVisible();
+  // All four lifecycle labels are distinguishable, and RESEARCH is not PRODUCTION.
+  await expect(page.getByText(/ACTIVE PRODUCTION/).first()).toBeVisible();
+  await expect(page.getByText(/RESEARCH ONLY/).first()).toBeVisible();
+  // The economic guard is named as the authority, not the strategy.
+  await expect(page.getByText('EconomicEdgeGuard').first()).toBeVisible();
+  // No promotion or trading control may exist on this page.
+  for(const name of ['BUY','SELL','PROMOTE','ACTIVATE','ENABLE','FORCE TRADE','SET LIVE MARKET'])
+    await expect(page.getByRole('button',{name})).toHaveCount(0);
+  for(const banned of ['GUARANTEED','RISK FREE','PROFIT GUARANTEED','BEST COIN'])
+    await expect(page.getByText(banned)).toHaveCount(0);
+  expect(mutations).toEqual([]);
+  expect(external).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('scanner page never exposes an automatic market promotion control',async({page})=>{
   await page.goto(BASE+'/');
   await page.getByRole('button',{name:'Scanner'}).click();
