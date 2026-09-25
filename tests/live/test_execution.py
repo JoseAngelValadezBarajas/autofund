@@ -76,11 +76,11 @@ class FakeTransport:
         raise AssertionError("unexpected fake request")
 
 
-def trade(origin: str, tid="trade1", minor="5"):
+def trade(origin: str, tid="trade1", minor="5", fee="0.01"):
     return {"tid": tid, "oid": "order1", "origin_id": origin, "book": "btc_mxn", "side": "buy",
             "major_currency": "btc", "minor_currency": "mxn", "major": str(D(minor) / D("1000000")),
             "minor": "-" + minor, "price": "1000000", "created_at": datetime.now(UTC).isoformat(),
-            "fees_amount": str(-D(minor) * D("0.01")), "fees_currency": "mxn", "maker_side": "sell"}
+            "fees_amount": str(-D(minor) * D(fee)), "fees_currency": "mxn", "maker_side": "sell"}
 
 
 def sell_trade(origin: str, tid="trade-sell", minor="5", major="0.000005"):

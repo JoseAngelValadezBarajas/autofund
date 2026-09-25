@@ -6,7 +6,7 @@ suite. Nothing here may reach Bitso; explicit lifecycle tests POST only to the f
 
 import json
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -271,10 +271,16 @@ def test_account_balance_contradiction_blocks_start_without_post(production):
 
 def test_offline_real_buy_lifecycle_reaches_report_and_handoff(production):
     app, runner, transport = production
+    # The economic guard refuses a BUY whose round trip cannot pay for itself, and
+    # a 1% taker fee against the Champion's 20 bps exit target never can. This test
+    # exercises lifecycle plumbing, so it uses a fee at which the strategy's own
+    # exit boundary is genuinely profitable.
+    transport.fee = "0.001"
     app.startup()
     original = runner.execution.submit_authorized
     def fill_then_submit(intent):
-        transport.rows = [trade(intent.origin_id, minor=str(intent.minor_budget))]
+        transport.rows = [trade(intent.origin_id, minor=str(intent.minor_budget),
+                                fee=transport.fee)]
         original(intent)
     runner.execution.submit_authorized = fill_then_submit
     app.start(SessionConfig(), CONFIRMATION)
@@ -290,4 +296,10 @@ def test_offline_real_buy_lifecycle_reaches_report_and_handoff(production):
     assert report["execution"]["fills"] >= 1
     assert report["financial"]["final_equity_mxn"] != "50"
     assert handoff["financial_truth"]["execution"]["reconciliation_state"] == "PASS"
-    assert handoff["financial_truth"]["portfolio"]["quantity"] == "0.0000108910891"
+    # The budget is capped by the 11 MXN single-order cap and split between the
+    # quoted ask and the quote-denominated fee the account actually pays, so the
+    # owned quantity is a consequence of the fee, not a fixed number.
+    cap = D("11")
+    fee = D(transport.fee)
+    budget = (cap / (1 + fee)).quantize(D("0.00000001"), rounding=ROUND_DOWN)
+    assert Decimal(handoff["financial_truth"]["portfolio"]["quantity"]) == budget / D("1000000")

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from autofund.decimal_utils import ONE, ZERO, financial
+from autofund.decimal_utils import ONE, ZERO, decimal, financial
 
 EVIDENCE_VERSION = "autofund.strategy-evidence.v1"
 DISTANCE_VERSION = "autofund.distance-to-signal.v1"
@@ -71,6 +71,32 @@ class ChampionParameters:
 
 
 CHAMPION_PARAMETERS = ChampionParameters()
+
+
+@financial
+def exit_boundary(average_cost_mxn: Decimal, parameters: ChampionParameters = CHAMPION_PARAMETERS) -> Decimal:
+    """The Champion's SELL boundary for a given average cost.
+
+    Exposed so the economic guard can evaluate the *strategy's own* target price
+    without duplicating or reinterpreting the strategy's arithmetic. The average
+    cost passed in must already reflect the buy fee, because that is what the
+    runner's position carries.
+    """
+    decimal(average_cost_mxn, "average_cost_mxn")
+    if average_cost_mxn <= ZERO:
+        return ZERO
+    return average_cost_mxn * (ONE + parameters.exit_threshold)
+
+
+@financial
+def entry_boundary(closes: tuple[Decimal, ...],
+                   parameters: ChampionParameters = CHAMPION_PARAMETERS) -> Decimal:
+    """The Champion's BUY boundary for a rolling closed-candle series."""
+    if not closes:
+        return ZERO
+    window = closes[-parameters.max_window:]
+    mean = sum(window, ZERO) / Decimal(len(window))
+    return mean * (ONE - parameters.entry_threshold)
 
 
 @dataclass(frozen=True, slots=True)

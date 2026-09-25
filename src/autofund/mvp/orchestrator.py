@@ -14,7 +14,15 @@ from autofund.decimal_utils import decimal
 from autofund.live.models import LiveError
 
 from .adaptive import AdaptiveEngine
-from .champion import DECISION_BUY, DECISION_SELL, evaluate_champion
+from .champion import DECISION_BUY, DECISION_SELL, evaluate_champion, exit_boundary
+from .economics import DEFAULT_POLICY as DEFAULT_ECONOMIC_POLICY
+from .economics import (
+    INSUFFICIENT_ECONOMIC_EVIDENCE,
+    PROFIT_TAKING,
+    EconomicPolicy,
+    economic_entry_model,
+    economic_exit_model,
+)
 from .observability import MvpObservability
 from .scanner import MarketScanner
 from .telemetry import SessionTelemetry
@@ -23,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.1.2"
+PRODUCT_VERSION = "AutoFund MVP 0.1.3"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -34,6 +42,13 @@ STOP_LOSS_LIMIT = "MAX_SESSION_LOSS_REACHED"
 STOP_KILL_SWITCH = "KILL_SWITCH_ACTIVATED"
 STOP_RUNNER_FAILURE = "EXECUTION_FAILURE"
 STOP_BLOCKED_RECOVERY = "BLOCKED_RECOVERY_UNRESOLVED_ORDER"
+
+# Expected slippage in basis points assumed by economic admission. AutoFund has
+# no measured slippage history, so the honest default is zero and unmodelled
+# friction is covered by the versioned `minimum_net_edge_bps` policy buffer.
+# It is deliberately NOT derived from `slippage_tolerance`: that is an upper
+# bound the order may not exceed, not a forecast of what it will pay.
+DEFAULT_SLIPPAGE_BPS = Decimal("0")
 
 # Internal liveness watchdog. Kept short so a stalled process is noticed quickly;
 # a gap larger than the threshold means no execution was happening.
@@ -106,6 +121,8 @@ class TradingRunner(Protocol):
     def stop(self) -> None: ...
     def kill(self) -> None: ...
     def snapshot(self) -> dict[str, Any]: ...
+    @property
+    def economic_policy(self) -> EconomicPolicy: ...
     def production_preflight(self) -> dict[str, Any]: ...
     def refresh_production_preflight(self, event: Any = None) -> dict[str, Any]: ...
 
@@ -126,6 +143,15 @@ class SafeIdleRunner:
         self.wallet_status = "UNAVAILABLE"
         self.wallet_error: str | None = None
         self.wallet_observed_at: str | None = None
+        # Economic admission state. The guard gates financial intents only; it
+        # never changes strategy thresholds or the Champion fingerprint.
+        self._economic_policy = DEFAULT_ECONOMIC_POLICY
+        self._taker_fee_rate = Decimal("0")
+        self._slippage_bps = DEFAULT_SLIPPAGE_BPS
+        self._economically_rejected = 0
+        # Latest depth observed by the market loop, so the operator's economic
+        # view tracks the market without the guard performing its own reads.
+        self._last_depth: Any = None
         self.preflight_status = PREFLIGHT_NOT_RUN
         self.preflight_blockers: tuple[str, ...] = ("PRODUCTION_PREFLIGHT_NOT_RUN",)
         self.preflight_warnings: tuple[str, ...] = ()
@@ -165,11 +191,23 @@ class SafeIdleRunner:
                 "wallet": {"status": self.wallet_status, "error": self.wallet_error, "read_only": True,
                            "observed_at": self.wallet_observed_at, "balances": []},
                 "signals": {"admitted": 0, "suppressed_pending_order": 0,
-                            "strategy_buy_decisions": 0, "strategy_sell_decisions": 0},
+                            "strategy_buy_decisions": 0, "strategy_sell_decisions": 0,
+                            "economically_rejected": 0},
+                "economics": {"position_open": False, "classification": "NO_POSITION",
+                              "economically_rejected": 0,
+                              "policy": self._economic_policy.public()},
                 "blocked_recovery": {"blocked": False, "origins": []}}
 
     def refresh_wallet(self) -> None:
         """Safe-idle runners own no exchange transport, so there is nothing to read."""
+
+    @property
+    def economic_policy(self) -> EconomicPolicy:
+        """The economic admission policy this runner enforces.
+
+        Reported so a session's admission rules are auditable, never hidden.
+        """
+        return self._economic_policy
 
 
 class ProductionAutonomousRunner(SafeIdleRunner):
@@ -307,6 +345,11 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             message = exc.args[0] if isinstance(exc, LiveError) and exc.args else "PRODUCTION_PREFLIGHT_UNAVAILABLE"
             return False, (str(message),), ()
         checked = self.last_preflight
+        # The economic guard uses the confirmed account fee and the executable ask
+        # from the same preflight, so it needs no market read of its own and can
+        # never disagree with the order path about fees, prices or spread.
+        if checked.fees.taker_fee_decimal > 0:
+            self._taker_fee_rate = checked.fees.taker_fee_decimal
         return checked.ready, tuple(checked.failures), tuple(checked.warnings)
 
     def production_preflight(self) -> dict[str, Any]:
@@ -361,6 +404,7 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         self._strategy_fingerprint = self._champion_fingerprint or ""
         self._admitted = self._suppressed = 0
         self._strategy_buy_decisions = self._strategy_sell_decisions = 0
+        self._economically_rejected = 0
         self._blocked_recovery = ()
         self.observability.heartbeat(status="RUNNING")
         self._stop.clear()
@@ -384,6 +428,7 @@ class ProductionAutonomousRunner(SafeIdleRunner):
             try:
                 started = monotonic()
                 depth = self.execution.client.order_book()
+                self._last_depth = depth
                 # Read-only operator projection of real market data.
                 self.observability.observe_market(depth, latency_ms=(monotonic() - started) * 1000)
                 minute = depth.timestamp.strftime("%Y%m%d%H%M")
@@ -431,6 +476,105 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         else:
             self._event("NO_SIGNAL", component="strategy", message=evidence.message, **payload)
 
+    def _exit_economics(self, *, checked: Any, target_price: Decimal, exit_class: str,
+                        correlation: str) -> Any:
+        """Model selling the owned position at `target_price`, using `checked`.
+
+        `checked` is the validated GET-only preflight the execution path itself
+        uses, so the guard judges the same fees, prices and spread the order will
+        actually face. The guard never performs its own market reads.
+        """
+        position = self.execution.wallet.positions.get("BTC/MXN")
+        if position is None or position.quantity <= 0:
+            return None
+        model = economic_exit_model(
+            book="BTC/MXN", quantity=position.quantity, cost_basis_mxn=position.cost_basis_mxn,
+            strategy_exit_price_mxn=target_price, best_bid_mxn=checked.depth.best_bid,
+            exit_fee_rate=checked.fees.taker_fee_decimal, spread_bps=checked.depth.spread_bps,
+            slippage_bps=self._slippage_bps, policy=self._economic_policy, exit_class=exit_class)
+        self._event("ECONOMIC_EXIT_EVALUATED", component="economics", correlation_id=correlation,
+                    message=model.outcome, side="SELL", **model.telemetry())
+        self._event("ECONOMIC_EXIT_PASS" if model.admissible else "ECONOMIC_EXIT_REJECT",
+                    component="economics", correlation_id=correlation,
+                    level="INFO" if model.admissible else "WARNING",
+                    message=model.reason or model.classification, side="SELL", **model.telemetry())
+        return model
+
+    def _economically_admissible(self, side: str, correlation: str) -> bool:
+        """Whether a strategy signal may become a financial intent.
+
+        Strategy and economics are separate concerns. The Champion decides from
+        price structure alone and its fingerprint is unchanged; this decides
+        whether the trade it proposes is expected to be profitable after the
+        trading costs AutoFund actually pays. A rejection is recorded with
+        structured evidence and the strategy decision stays visible.
+
+        It fails closed: when the economics cannot be established, no intent is
+        created. That is deliberate, because the alternative is admitting an
+        unresearched financial commitment.
+        """
+        checked = self.last_preflight
+        if checked is None or checked.fees.taker_fee_decimal <= 0:
+            self._economics_reject(side, correlation, INSUFFICIENT_ECONOMIC_EVIDENCE)
+            return False
+        try:
+            if side == "SELL":
+                position = self.execution.wallet.positions.get("BTC/MXN")
+                if position is None or position.quantity <= 0:
+                    return True  # no inventory: the existing risk check decides
+                target = exit_boundary(position.cost_basis_mxn / position.quantity)
+                model = self._exit_economics(checked=checked, target_price=target,
+                                             exit_class=PROFIT_TAKING, correlation=correlation)
+                if model is not None and not model.admissible:
+                    self._economically_rejected += 1
+                    return False
+                return True
+            if side == "BUY":
+                budget = checked.budget
+                entry_price = checked.depth.best_ask
+                if budget <= 0 or entry_price <= 0:
+                    self._economics_reject(side, correlation, INSUFFICIENT_ECONOMIC_EVIDENCE)
+                    return False
+                # Model the position this exact intent would create and price it at
+                # the Champion's own exit boundary: the price the strategy will
+                # really attempt to sell at. No profit is assumed for the strategy.
+                fee = checked.fees.taker_fee_decimal
+                owned_major = (budget / entry_price) * (Decimal("1") - fee)
+                if owned_major <= 0:
+                    self._economics_reject(side, correlation, INSUFFICIENT_ECONOMIC_EVIDENCE)
+                    return False
+                model = economic_entry_model(
+                    book="BTC/MXN", budget_mxn=budget, buy_price_mxn=entry_price,
+                    target_price_mxn=exit_boundary(budget / owned_major),
+                    buy_fee_rate=fee, sell_fee_rate=fee, spread_bps=checked.depth.spread_bps,
+                    slippage_bps=self._slippage_bps, policy=self._economic_policy)
+                self._event("ECONOMIC_EDGE_EVALUATED", component="economics",
+                            correlation_id=correlation, message=model.outcome, side="BUY",
+                            **model.telemetry())
+                self._event("ECONOMIC_EDGE_PASS" if model.admissible else "ECONOMIC_EDGE_REJECT",
+                            component="economics", correlation_id=correlation,
+                            level="INFO" if model.admissible else "WARNING",
+                            message=model.reason or model.outcome, side="BUY",
+                            **model.telemetry())
+                if not model.admissible:
+                    self._economically_rejected += 1
+                    return False
+                return True
+        except Exception:
+            self._economics_reject(side, correlation, INSUFFICIENT_ECONOMIC_EVIDENCE)
+            return False
+        return True
+
+    def _economics_reject(self, side: str, correlation: str, reason: str) -> None:
+        """Record an economic refusal that produced no complete model."""
+        self._economically_rejected += 1
+        entry = side == "BUY"
+        self._event("ECONOMIC_EDGE_EVALUATED" if entry else "ECONOMIC_EXIT_EVALUATED",
+                    component="economics", correlation_id=correlation, message=reason, side=side)
+        self._event("ECONOMIC_EDGE_REJECT" if entry else "ECONOMIC_EXIT_REJECT",
+                    component="economics", correlation_id=correlation, level="WARNING",
+                    message=reason, side=side)
+
     def handle_signal(self, side: str) -> None:
         if not self.running or self.killed:
             return
@@ -453,6 +597,10 @@ class ProductionAutonomousRunner(SafeIdleRunner):
                     pass
             return
         correlation = uuid4().hex
+        # Economic admission runs BEFORE this signal is counted as admitted or any
+        # durable intent exists. A strategy signal is not a financial decision.
+        if not self._economically_admissible(side, correlation):
+            return
         self._admitted += 1
         self._event("SIGNAL_GENERATED", component="strategy", correlation_id=correlation, message=side)
         try:
@@ -511,7 +659,9 @@ class ProductionAutonomousRunner(SafeIdleRunner):
                            "balances": wallet},
                 "signals": {"admitted": self._admitted, "suppressed_pending_order": self._suppressed,
                             "strategy_buy_decisions": self._strategy_buy_decisions,
-                            "strategy_sell_decisions": self._strategy_sell_decisions},
+                            "strategy_sell_decisions": self._strategy_sell_decisions,
+                            "economically_rejected": self._economically_rejected},
+                "economics": self._economics_view(),
                 "blocked_recovery": {"blocked": bool(self._blocked_recovery),
                                      "origins": list(self._blocked_recovery)},
                 "position": None if inventory == 0 else {"asset": "BTC", "quantity": str(inventory),
@@ -530,14 +680,73 @@ class ProductionAutonomousRunner(SafeIdleRunner):
                               "buy": row["buy"], "sell": row["sell"]},
                 "capital_status": "CAPITAL_NOT_EXECUTABLE" if Decimal(str(row["cash_mxn"])) < Decimal("10.1") else "EXECUTABLE"}
 
+    def _economics_view(self) -> dict[str, Any]:
+        """Live economic exit model for the open AutoFund position.
+
+        Informational only: it explains why a profit-taking exit may be refused.
+        It never creates an intent and never blocks startup.
+        """
+        policy = self._economic_policy.public()
+        position = self.execution.wallet.positions.get("BTC/MXN")
+        checked = self.last_preflight
+        if position is None or position.quantity <= 0:
+            return {"position_open": False, "policy": policy,
+                    "economically_rejected": self._economically_rejected,
+                    "classification": "NO_POSITION"}
+        if checked is None:
+            return {"position_open": True, "policy": policy, "classification": "UNKNOWN",
+                    "admissible": None, "reason": INSUFFICIENT_ECONOMIC_EVIDENCE,
+                    "economically_rejected": self._economically_rejected}
+        target = exit_boundary(position.cost_basis_mxn / position.quantity)
+        depth = self._last_depth or checked.depth
+        model = economic_exit_model(
+            book="BTC/MXN", quantity=position.quantity, cost_basis_mxn=position.cost_basis_mxn,
+            strategy_exit_price_mxn=target, best_bid_mxn=depth.best_bid,
+            exit_fee_rate=checked.fees.taker_fee_decimal, spread_bps=depth.spread_bps,
+            slippage_bps=self._slippage_bps, policy=self._economic_policy, exit_class=PROFIT_TAKING)
+        return {"position_open": True, "classification": model.classification,
+                "admissible": model.admissible, "outcome": model.outcome, "reason": model.reason,
+                "policy": policy, "economically_rejected": self._economically_rejected,
+                **{k: v for k, v in model.telemetry().items() if k not in {"policy", "version"}}}
+
 
 class DemoAutonomousRunner(SafeIdleRunner):
     """Deterministic browser fixture; never imports or calls an exchange client."""
+
+    # Demo-fixture values. They exist so the economic exit panel can be rendered
+    # and visually verified without any exchange traffic. They are derived from
+    # the position this fixture already publishes (average cost 11 MXN/BTC) and
+    # are explicitly labelled DEMO wherever they surface: they are not evidence
+    # about Production, and no Production decision ever reads them.
+    DEMO_QUANTITY = Decimal("0.0000109")
+    DEMO_COST_BASIS = Decimal("0.0001199")  # 0.0000109 BTC at 11 MXN/BTC
+    DEMO_MARK = Decimal("10.92")
+    DEMO_TAKER_FEE = Decimal("0.0078")
 
     def __init__(self) -> None:
         super().__init__(demo=True)
         self.step = 0
         self.event: Any = None
+
+    @classmethod
+    def _demo_economics(cls, quantity: Decimal, cost_basis_mxn: Decimal) -> dict[str, Any]:
+        """Clearly-marked DEMO economic exit model.
+
+        The demo runner holds no exchange transport, so it has no confirmed account
+        fee; the rate here is an illustrative fixture constant and never a claim
+        about a real account.
+        """
+        target = exit_boundary(cost_basis_mxn / quantity)
+        model = economic_exit_model(
+            book="BTC/MXN", quantity=quantity, cost_basis_mxn=cost_basis_mxn,
+            strategy_exit_price_mxn=target, best_bid_mxn=cls.DEMO_MARK,
+            exit_fee_rate=cls.DEMO_TAKER_FEE, exit_class=PROFIT_TAKING)
+        return {"position_open": True, "classification": model.classification,
+                "admissible": model.admissible, "outcome": model.outcome, "reason": model.reason,
+                "demo": True, "source": "DEMO_FIXTURE",
+                "economically_rejected": 0, "policy": DEFAULT_ECONOMIC_POLICY.public(),
+                **{k: v for k, v in model.telemetry().items()
+                   if k not in {"policy", "version"}}}
 
     def production_preflight(self) -> dict[str, Any]:
         # Demo never contacts Bitso, so it must not claim Production readiness.
@@ -591,10 +800,18 @@ class DemoAutonomousRunner(SafeIdleRunner):
             base.update(cash_mxn="39", equity_mxn="49.92", deployed_mxn="10.92",
                         position={"asset": "BTC", "quantity": "0.0000109", "average_cost_mxn": "11",
                                   "mark_mxn": "10.92", "market_value_mxn": "10.92", "realized_pnl_mxn": "0",
-                                  "unrealized_pnl_mxn": "-0.08", "fees_mxn": "0.08", "strategy_version": "0.1"})
+                                  "unrealized_pnl_mxn": "-0.08", "fees_mxn": "0.08", "strategy_version": "0.1"},
+                        economics=self._demo_economics(self.DEMO_QUANTITY, self.DEMO_COST_BASIS))
         elif self.step >= 2:
             base.update(cash_mxn="49.80", equity_mxn="49.80", deployed_mxn="0", realized_pnl_mxn="-0.20",
                         fees_mxn="0.16", position=None)
+        if "economics" not in base:
+            # Always present so the read model has one shape; the demo stands in no
+            # position, so it reports no position rather than inventing economics.
+            base["economics"] = {"position_open": False, "classification": "NO_POSITION",
+                                 "demo": True, "source": "DEMO_FIXTURE",
+                                 "economically_rejected": 0,
+                                 "policy": DEFAULT_ECONOMIC_POLICY.public()}
         return base
 
 
@@ -810,7 +1027,11 @@ class AutoFundOrchestrator:
                       "champion_fingerprint": self.adaptive.champion.fingerprint},
             config={**(asdict(self.session_config) if self.session_config else {}),
                     "authorized_capital_mxn": str(AUTHORIZED_CAPITAL),
-                    "max_deployment_mxn": str(MAX_DEPLOYMENT), "single_order_cap_mxn": str(SINGLE_ORDER_CAP)},
+                    "max_deployment_mxn": str(MAX_DEPLOYMENT), "single_order_cap_mxn": str(SINGLE_ORDER_CAP),
+                    # Economic admission is part of the session configuration
+                    # fingerprint: two runs with different economic policies made
+                    # different financial decisions and must not compare as equal.
+                    "economic_policy": self.runner.economic_policy.public()},
             time_facts={"actual_runtime_seconds": view["actual_runtime_seconds"],
                         "configured_duration_seconds": view["max_duration_seconds"]},
             learning=learning,

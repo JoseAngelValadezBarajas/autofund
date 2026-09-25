@@ -15,6 +15,21 @@ def auth(http):
     return {"Origin": "http://testserver", "X-AutoFund-Control-Token": token}
 
 
+def test_economics_reach_the_read_model_and_the_stream(tmp_path):
+    """0.1.3 economics must be published, and never only computed internally.
+
+    The panel is derived from this field, so a snapshot missing it would silently
+    hide why a profit-taking exit is refused.
+    """
+    http, _orchestrator = client(tmp_path)
+    payload = http.get("/api/v1/mvp").json()
+    assert "economics" in payload
+    assert payload["economics"]["position_open"] is False
+    assert payload["economics"]["classification"] == "NO_POSITION"
+    # Admission wins are reported alongside the strategy counters it qualifies.
+    assert payload["signals"]["economically_rejected"] == 0
+
+
 def test_control_api_requires_origin_token_confirmation_and_bounds(tmp_path):
     http, app = client(tmp_path)
     body = {"confirmation": "START AUTOFUND REAL 50", "max_session_loss_mxn": "10",

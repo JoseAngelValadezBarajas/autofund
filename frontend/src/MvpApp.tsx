@@ -2,7 +2,50 @@ import {useEffect,useState} from 'react';
 import {LiveActivityPage,LiveMarketPage,LiveOperatorView,LiveTelemetryPage,type MvpObservability,useTicker} from './LiveOperator';
 import {LearningPage,MarketScannerPage,type LearningView,type ScannerEvidence} from './MarketScanner';
 
-type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];wallet?:{status:string;error?:string|null;read_only:boolean;balances:{currency:string;total:string;available:string;locked:string;approx_mxn:string|null}[]};execution?:any;production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];signals?:MvpObservability['signals'];blocked_recovery?:MvpObservability['blocked_recovery'];runtime_gaps?:MvpObservability['runtime_gaps'];monitored_seconds?:number|null;session?:MvpObservability['session']&{started_at?:string|null;ended_at?:string|null;actual_runtime_seconds?:number|null;stop_reason?:string|null;frozen?:boolean};learning?:LearningView;scanner?:ScannerEvidence};
+type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];wallet?:{status:string;error?:string|null;read_only:boolean;balances:{currency:string;total:string;available:string;locked:string;approx_mxn:string|null}[]};execution?:any;production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];signals?:MvpObservability['signals'];economics?:EconomicExitView;blocked_recovery?:MvpObservability['blocked_recovery'];runtime_gaps?:MvpObservability['runtime_gaps'];monitored_seconds?:number|null;session?:MvpObservability['session']&{started_at?:string|null;ended_at?:string|null;actual_runtime_seconds?:number|null;stop_reason?:string|null;frozen?:boolean};learning?:LearningView;scanner?:ScannerEvidence};
+
+/**
+ * 0.1.3 fee-aware economic exit model for the open AutoFund position.
+ *
+ * Informational only: it explains why a profit-taking exit may be refused. It is
+ * never a control surface, and the operator cannot trade from it.
+ */
+export interface EconomicExitView{position_open:boolean;classification:string;admissible?:boolean;outcome?:string;
+  reason?:string;economically_rejected?:number;strategy_exit_price_mxn?:string;
+  fee_only_break_even_price_mxn?:string;estimated_break_even_price_mxn?:string;
+  current_best_bid_mxn?:string;expected_net_pnl_if_sold_now_mxn?:string;
+  expected_net_pnl_at_strategy_exit_mxn?:string;cost_basis_mxn?:string;owned_quantity?:string;
+  average_cost_mxn?:string;distance_to_break_even_bps?:string;
+  policy?:{version:string;minimum_net_profit_mxn:string;minimum_net_edge_bps:string}}
+
+/** Compact economic exit panel: no manual BUY/SELL controls, ever. */
+function EconomicExitPanel({economics}:{economics:EconomicExitView}){
+  if(!economics.position_open)return null;
+  const negative=(economics.expected_net_pnl_at_strategy_exit_mxn??'0').startsWith('-');
+  return <>
+    <h2>ECONOMIC EXIT</h2>
+    <p className="economic-status" data-classification={economics.classification}>
+      {economics.classification} · strategy exit is {economics.classification==='NET-PROFITABLE'
+        ?'expected to net a profit after fees':'expected to net a loss after fees'}
+    </p>
+    <div className="table"><table><tbody>
+      <tr><th>Strategy exit price</th><td>{economics.strategy_exit_price_mxn??'UNKNOWN'} MXN</td></tr>
+      <tr><th>Fee-only break-even</th><td>{economics.fee_only_break_even_price_mxn??'UNKNOWN'} MXN</td></tr>
+      <tr><th>Estimated break-even</th><td>{economics.estimated_break_even_price_mxn??'UNKNOWN'} MXN</td></tr>
+      <tr><th>Current best bid</th><td>{economics.current_best_bid_mxn??'UNKNOWN'} MXN</td></tr>
+      <tr><th>Distance to break-even</th><td>{economics.distance_to_break_even_bps??'UNKNOWN'} bps</td></tr>
+      <tr><th>Expected P&amp;L if sold now</th><td>{economics.expected_net_pnl_if_sold_now_mxn??'UNKNOWN'} MXN</td></tr>
+      <tr><th>Expected P&amp;L at strategy exit</th>
+        <td className={negative?'negative':'positive'}>{economics.expected_net_pnl_at_strategy_exit_mxn??'UNKNOWN'} MXN</td></tr>
+      <tr><th>Economic rejections</th><td>{economics.economically_rejected??0}</td></tr>
+    </tbody></table></div>
+    <p>A profit-taking SELL is admitted only when the strategy exit price clears
+      break-even after the confirmed account fee. Safety exits are never blocked.</p>
+    {economics.policy&&<p className="policy">Economic policy {economics.policy.version} ·
+      minimum net profit {economics.policy.minimum_net_profit_mxn} MXN ·
+      minimum net edge {economics.policy.minimum_net_edge_bps} bps</p>}
+  </>
+}
 
 const pages=['Overview','Market','Activity','Wallet','Positions','Ledger','Sessions','Learning','Telemetry','System','Scanner'];
 
@@ -113,6 +156,7 @@ export function MvpApp({initial}:{initial:Snapshot}){
             <tr><th>Strategy version</th><td>{data.position.strategy_version}</td></tr>
           </tbody></table></div>
         :<p>No AutoFund-owned position — position NONE.</p>}
+        {data.economics&&<EconomicExitPanel economics={data.economics}/>}
         <p>Only inventory derived from confirmed AutoFund fills is shown. Unrelated Bitso balances are never displayed.</p></>}
 
       {page==='Ledger'&&<p>Ledger updates: {events.filter(e=>e.event==='LEDGER_UPDATED').length} · Realized P&amp;L {data.realized_pnl_mxn} MXN · Fees {data.fees_mxn} MXN</p>}
