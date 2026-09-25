@@ -25,12 +25,14 @@ here optimises for trade count.
 """
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 from autofund.decimal_utils import ZERO, financial
 from autofund.exchanges.bitso.accounting import ConfirmedFillAccounting
-from autofund.exchanges.bitso.models import ExchangeTradeFill, Side
+from autofund.exchanges.bitso.models import ExchangeTradeFill
+from autofund.models import Side
 from autofund.replay.data import Candle
 from autofund.replay.serialization import fingerprint
 from autofund.wallet import Wallet
@@ -378,8 +380,7 @@ class _ShadowPortfolio:
         return self.wallet.cash_mxn - before
 
 
-def _now():  # type: ignore[no-untyped-def]
-    from datetime import UTC, datetime
+def _now() -> datetime:
     return datetime.now(UTC)
 
 

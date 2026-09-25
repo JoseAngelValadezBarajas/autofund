@@ -4,7 +4,7 @@ import {MvpApp} from './MvpApp';
 
 class Events {addEventListener(){} close(){}}
 
-const stopped:any={product_version:'AutoFund MVP 0.2',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+const stopped:any={product_version:'AutoFund MVP 0.2.1',demo_mode:true,app_state:'STOPPED',auto_execution:false,
  session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
  risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
  realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'mean-reversion-safe',
@@ -20,7 +20,11 @@ const row=(over:any)=>({
  economic_reject_rate:'0',certification_state:'NOT_VIABLE',certified:false,
  current_strategy_decision:'NO_SIGNAL',expected_net_edge_bps:null,production_eligible:false,
  position_status:'POSITION_OPEN',reason_code:'POSITION_ALREADY_OPEN_IN_MARKET',
- spread_bps:'6',depth_mxn:'5000',taker_fee:'0.0078',...over});
+ spread_bps:'6',depth_mxn:'5000',taker_fee:'0.0078',
+ fill_model:'DELAYED_NEXT_OBSERVATION',evidence_quality:'CANDLE_ONLY_ESTIMATE',
+ experiment_fingerprint:'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
+ window_provenance:'REAL_HISTORICAL_DEVELOPMENT',certification_reason:'NOT_CERTIFIED',
+ executable_fill_model:true,...over});
 
 const view:any={
  research_version:'autofund.production-market-selector.v2',
@@ -125,4 +129,62 @@ test('missing production market evidence is stated rather than fabricated',()=>{
  open();
  expect(screen.getByText('Production markets')).toBeTruthy();
  expect(screen.getByText(/No production market evidence published yet/)).toBeTruthy();
+});
+
+test('every pair is shown with the fill model that produced its evidence',()=>{
+ render(<MvpApp initial={{...stopped,production_markets:view}}/>);
+ open();
+ // A round-trip count is only interpretable alongside its fill model: five trades
+ // under a same-bar close fill and five under a delayed executable fill are
+ // different claims, and a table showing only the count invites the wrong reading.
+ const cells=document.querySelectorAll('[data-fill-model]');
+ expect(cells.length).toBe(view.markets.length);
+ for(const cell of Array.from(cells))
+   expect(cell.getAttribute('data-fill-model')).toBe('DELAYED_NEXT_OBSERVATION');
+ expect(screen.queryByText('SAME_BAR_CLOSE')).toBeNull();
+});
+
+test('fill evidence quality is labelled so an estimate is not read as a book',()=>{
+ render(<MvpApp initial={{...stopped,production_markets:view}}/>);
+ open();
+ const cells=document.querySelectorAll('[data-evidence-quality]');
+ expect(cells.length).toBe(view.markets.length);
+ for(const cell of Array.from(cells))
+   expect(cell.getAttribute('data-evidence-quality')).toBe('CANDLE_ONLY_ESTIMATE');
+});
+
+test('development evidence is labelled as development, not as validation',()=>{
+ render(<MvpApp initial={{...stopped,production_markets:view}}/>);
+ open();
+ const cells=document.querySelectorAll('[data-window-provenance]');
+ expect(cells.length).toBe(view.markets.length);
+ for(const cell of Array.from(cells))
+   expect(cell.getAttribute('data-window-provenance')).toBe('REAL_HISTORICAL_DEVELOPMENT');
+ // The panel must never imply that this window confirms anything out of sample.
+ expect(screen.queryByText(/out-of-sample/i)).toBeNull();
+ expect(screen.queryByText(/HOLDOUT VALIDATED/i)).toBeNull();
+});
+
+test('the experiment fingerprint is shown per pair and quoted in full',()=>{
+ render(<MvpApp initial={{...stopped,production_markets:view}}/>);
+ open();
+ const shown=screen.getAllByText(view.markets[0].experiment_fingerprint);
+ expect(shown.length).toBe(view.markets.length);
+ expect(view.markets[0].experiment_fingerprint.length).toBe(64);
+});
+
+test('a certification refusal states its reason per pair',()=>{
+ render(<MvpApp initial={{...stopped,production_markets:view}}/>);
+ open();
+ const cells=document.querySelectorAll('[data-certification-reason]');
+ expect(cells.length).toBe(view.markets.length);
+ for(const cell of Array.from(cells))
+   expect(cell.getAttribute('data-certification-reason')).not.toBe('—');
+});
+
+test('the page never ranks markets or names a best coin',()=>{
+ render(<MvpApp initial={{...stopped,production_markets:view}}/>);
+ open();
+ for(const banned of [/best coin/i,/most profitable/i,/top market/i,/recommended market/i])
+   expect(screen.queryByText(banned)).toBeNull();
 });

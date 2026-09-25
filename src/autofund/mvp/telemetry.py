@@ -111,7 +111,7 @@ class SessionTelemetry:
                       "ended_at": ended.isoformat().replace("+00:00", "Z"),
                       "stop_reason": stop_reason, **(time_facts or {})}
         identity_block = {"session_id": self.session_id, "run_id": self.run_id,
-                          "product_version": "AutoFund MVP 0.2",
+                          "product_version": "AutoFund MVP 0.2.1",
                           "strategy_version": self.strategy_version, **(identity or {})}
         scanner = scanner_evidence(rows)
         facts_with_latency = {**facts, "largest_latency_ms": round(largest, 3)}

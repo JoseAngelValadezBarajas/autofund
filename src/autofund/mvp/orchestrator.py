@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2"
+PRODUCT_VERSION = "AutoFund MVP 0.2.1"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1237,6 +1237,16 @@ class AutoFundOrchestrator:
                 "certified": tier in SELECTABLE_STATES,
                 "current_strategy_decision": row.get("decision", "NO_SIGNAL"),
                 "expected_net_edge_bps": row.get("expected_net_edge_bps"),
+                # Evidence realism (MVP 0.2.1). A round-trip count is only meaningful
+                # alongside the fill model and window provenance that produced it, so
+                # the panel can never show a number whose assumptions are hidden.
+                "fill_model": row.get("fill_model", "UNKNOWN"),
+                "evidence_quality": row.get("evidence_quality", "UNKNOWN"),
+                "experiment_fingerprint": row.get("experiment_fingerprint", ""),
+                "window_provenance": row.get("window_provenance", "NONE"),
+                "certification_reason": (row.get("certification_reason")
+                                         or "NOT_CERTIFIED"),
+                "executable_fill_model": bool(row.get("executable_fill_model", False)),
                 "production_eligible": (tier in SELECTABLE_STATES
                                         and candidate.status == "ELIGIBLE"),
                 "position_status": ("POSITION_OPEN"

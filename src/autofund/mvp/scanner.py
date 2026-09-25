@@ -352,6 +352,11 @@ class MarketScanner:
                                  net_pnl_mxn: str = "0", max_drawdown_mxn: str = "0",
                                  economic_reject_rate: str = "0", data_source: str = "CAPTURED",
                                  profiles: list[dict[str, Any]] | None = None,
+                                 fill_model: str = "UNKNOWN",
+                                 evidence_quality: str = "UNKNOWN",
+                                 experiment_fingerprint: str = "",
+                                 window_provenance: str = "NONE",
+                                 certification_reason: str = "",
                                  telemetry: Any = None) -> dict[str, Any]:
         """Record a real shadow evaluation result for one research market.
 
@@ -359,6 +364,12 @@ class MarketScanner:
         Only genuine evaluations are recorded: the caller supplies counts produced
         by actually replaying a candle series, so a market with no data is never
         counted here.
+
+        Rows are also stamped with the evidence model that produced them. A round-trip
+        count without its fill model and provenance cannot be interpreted: five trades
+        under a same-bar close fill and five under a delayed executable fill are
+        different claims, and a panel that showed only the count would be inviting the
+        reader to assume the stronger one.
         """
         with self._lock:
             row = self.shadow.setdefault(market, {
@@ -376,7 +387,13 @@ class MarketScanner:
                                 if evaluations else "0"),
                 "data_source": data_source, "evaluated": True,
                 "profiles": list(profiles or []),
-                "evidence_count": int(row.get("evidence_count", 0)) + 1})
+                "evidence_count": int(row.get("evidence_count", 0)) + 1,
+                "fill_model": fill_model, "evidence_quality": evidence_quality,
+                "experiment_fingerprint": experiment_fingerprint,
+                "window_provenance": window_provenance,
+                "certification_reason": certification_reason,
+                "executable_fill_model": True,
+            })
             if telemetry is not None:
                 telemetry("MARKET_SHADOW_EVALUATED", component="scanner", message=market,
                           market=market, candles=candles, evaluations=evaluations,
@@ -385,6 +402,9 @@ class MarketScanner:
                           economic_reject_rate=economic_reject_rate,
                           data_source=data_source,
                           strategy_compatibility=row["strategy_compatibility"],
+                          fill_model=fill_model, evidence_quality=evidence_quality,
+                          window_provenance=window_provenance,
+                          certification_reason=certification_reason,
                           profiles=list(profiles or []))
             return dict(row)
 

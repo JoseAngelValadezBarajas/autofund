@@ -29,6 +29,9 @@ export interface ProductionMarketRow {
   certification_state:string; certified:boolean;
   current_strategy_decision:string;
   expected_net_edge_bps:string|null;
+  fill_model:string; evidence_quality:string;
+  experiment_fingerprint:string; window_provenance:string;
+  certification_reason:string; executable_fill_model:boolean;
   production_eligible:boolean;
   position_status:string;
   reason_code:string;
@@ -92,12 +95,17 @@ function visualState(row:ProductionMarketRow):string{
 const text=(value:unknown,fallback='—')=>
   value===null||value===undefined||value===''?fallback:String(value);
 
+/** A fingerprint is only useful if it is quoted exactly; a truncated one is a different
+ *  value, so the full hash is shown and the cell is allowed to wrap. */
+const fingerprint=(value:string)=>value?value:'—';
+
 function MarketRow({row}:{row:ProductionMarketRow}){
   const state=visualState(row);
   return <tr data-market={row.market} data-state={state} data-reason={row.reason_code}>
     <td>{row.market}</td>
     <td>{row.market_class}</td>
     <td>{row.evidence_provenance}</td>
+    <td><span data-window-provenance={row.window_provenance}>{row.window_provenance}</span></td>
     <td>{row.closed_candles}</td>
     <td>{row.evaluations}</td>
     <td>{row.signals}</td>
@@ -106,6 +114,10 @@ function MarketRow({row}:{row:ProductionMarketRow}){
     <td>{row.shadow_fees_mxn}</td>
     <td>{row.shadow_drawdown_mxn}</td>
     <td>{row.economic_reject_rate}</td>
+    <td><span data-fill-model={row.fill_model}>{row.fill_model}</span></td>
+    <td><span data-evidence-quality={row.evidence_quality}>{row.evidence_quality}</span></td>
+    <td className="fingerprint" title={row.experiment_fingerprint}>
+      {fingerprint(row.experiment_fingerprint)}</td>
     <td><span className="status" data-certification={row.certification_state}>
       {row.certification_state}</span></td>
     <td>{row.current_strategy_decision}</td>
@@ -113,6 +125,8 @@ function MarketRow({row}:{row:ProductionMarketRow}){
     <td><span className="status" data-state={state}>{state}</span></td>
     <td><span className="reason" data-reason={row.reason_code}>
       {REASON_LABEL[row.reason_code]??row.reason_code}</span></td>
+    <td><span className="reason" data-certification-reason={row.certification_reason}>
+      {row.certification_reason}</span></td>
   </tr>;
 }
 
@@ -163,11 +177,18 @@ export function ProductionMarketsPage({markets}:
     </tbody></table></div>
 
     <h3>Markets</h3>
+    <p>Evidence is quoted with the execution model and the predeclared window
+      provenance that produced it. A round-trip count alone is not comparable across
+      fill models, and development evidence is real data that is still <b>not</b>
+      independent confirmation, so the two are never shown as if interchangeable.</p>
     {rows.length?<div className="table"><table>
-      <thead><tr><th>Market</th><th>Class</th><th>Provenance</th><th>Candles</th>
+      <thead><tr><th>Market</th><th>Class</th><th>Provenance</th><th>Window</th>
+        <th>Candles</th>
         <th>Evaluations</th><th>Signals</th><th>Round trips</th><th>Net P&amp;L</th>
-        <th>Fees</th><th>Drawdown</th><th>Econ. reject rate</th><th>Certification</th>
-        <th>Decision</th><th>Net edge (bps)</th><th>State</th><th>Why not trading</th></tr></thead>
+        <th>Fees</th><th>Drawdown</th><th>Econ. reject rate</th><th>Fill model</th>
+        <th>Fill evidence</th><th>Experiment</th><th>Certification</th>
+        <th>Decision</th><th>Net edge (bps)</th><th>State</th><th>Why not trading</th>
+        <th>Certification reason</th></tr></thead>
       <tbody>{rows.map(row=><MarketRow key={row.book} row={row}/>)}</tbody>
     </table></div>
       :<p>No market has been evaluated yet.</p>}
