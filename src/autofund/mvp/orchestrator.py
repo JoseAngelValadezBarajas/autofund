@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2.3"
+PRODUCT_VERSION = "AutoFund MVP 0.2.4"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1341,6 +1341,21 @@ class AutoFundOrchestrator:
         from .challenger_research import CONFIG_SETS, SELECTION_RULE
         from .economics import DEFAULT_POLICY
         from .execution_gap import MISSING, PARTIAL, PRESENT, architecture_gap
+        from .horizon import PREDECLARED_TIMEFRAMES
+        from .horizon_experiment import (
+            CERTIFYING_EXECUTION_MODE,
+            HORIZON_OUTCOMES,
+            MAX_CONFIGURATIONS_PER_HORIZON,
+            predeclared_configuration_budget,
+        )
+        from .horizon_profiles import horizon_profile_ids, horizon_profiles
+        from .microstructure import (
+            DEFAULT_RETENTION_HOURS,
+            PASSIVE_FILL_EXACTNESS,
+            QUEUE_POSITION_OBSERVABLE,
+            REAL_CAPTURED_MICROSTRUCTURE,
+            STOPPED,
+        )
         from .passive_execution import (
             CANDLE_ONLY_UNCERTAIN,
             execution_modes,
@@ -1464,6 +1479,63 @@ class AutoFundOrchestrator:
                 "production_authorised": False,
                 "cancel_implemented": False,
                 "production_mutations_added": 0,
+            },
+            # Time-horizon research (MVP 0.2.4). Reported as a *hypothesis under test*, not
+            # as a finding: the verdict comes from a frozen experiment evaluated on real
+            # market data, and no result exists until that runs. What is stated here is what
+            # was predeclared and what is structurally true regardless of the outcome.
+            "horizon_research": {
+                "hypothesis": ("at current trading costs, a coarser horizon may make "
+                               "transaction friction a smaller fraction of the expected "
+                               "opportunity while keeping risk within policy"),
+                "predeclared_timeframes": [spec.name for spec in PREDECLARED_TIMEFRAMES],
+                "horizons_tested_by_rule": len(PREDECLARED_TIMEFRAMES) == 2,
+                "profiles": [profile.public() for profile in horizon_profiles()],
+                "profile_ids": list(horizon_profile_ids()),
+                "max_configurations_per_strategy_and_horizon": MAX_CONFIGURATIONS_PER_HORIZON,
+                "configuration_budget": {key: count for key, count in
+                                         predeclared_configuration_budget()},
+                "selection_rule": list(SELECTION_RULE),
+                "all_configurations_retained": True,
+                "certifying_execution_mode": CERTIFYING_EXECUTION_MODE,
+                "maker_bound_may_certify": False,
+                "base_bar_seconds": 60,
+                "aggregation_uses_existing_base_bars": True,
+                "incomplete_buckets_dropped_not_filled": True,
+                "same_bar_fills_allowed": False,
+                "outcomes": list(HORIZON_OUTCOMES),
+                "verdict": None,
+                "verdict_pending_frozen_experiment": True,
+                "frozen_profile_fingerprints_changed": False,
+                "drawdown_policy_changed": False,
+                "capital_limits_changed": False,
+            },
+            # Forward microstructure capture (MVP 0.2.4). The evidence is collected, not
+            # assumed, and the collector cannot trade. Queue position and exact passive fill
+            # remain unknowable from public data, and saying so is the point.
+            "microstructure_capture": {
+                "enabled": False,
+                "provenance": REAL_CAPTURED_MICROSTRUCTURE,
+                "endpoints": ["order_book", "trades"],
+                "order_capability": "NONE",
+                "production_mutation": "NONE",
+                "credentials_scope": "READ_ONLY_PUBLIC_ENDPOINTS",
+                "separate_from_production_ledger": True,
+                "captured_books": [],
+                "order_book_events": 0,
+                "trade_tape_events": 0,
+                "capture_seconds": 0,
+                "health": STOPPED,
+                "gaps": 0,
+                "duplicates": 0,
+                "sequence_regressions": 0,
+                "anomalies_repaired": 0,
+                "bounded_storage": True,
+                "retention_hours": DEFAULT_RETENTION_HOURS,
+                "queue_position_observable": QUEUE_POSITION_OBSERVABLE,
+                "passive_fill_exactness": PASSIVE_FILL_EXACTNESS,
+                "adverse_selection_analysis_possible": False,
+                "exact_passive_fill_claim_made": False,
             },
             "production_gap": {
                 "missing": [item.name for item in architecture_gap()

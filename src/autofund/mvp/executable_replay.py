@@ -96,6 +96,15 @@ RISK_ADJUSTED_ENTRY_REJECT = "RISK_ADJUSTED_ENTRY_REJECT"
 
 MINUTES_PER_BAR = 60
 
+# Wall-clock minutes in one bar of the series being replayed. The replay's native bar is a
+# 1-minute candle, which is why this defaults to 1 — note that is NOT the same quantity as
+# `MINUTES_PER_BAR` above, which happens to equal 60 because it was written when a bar was
+# assumed to be an hour. A coarser horizon must pass its own value: a 12-bar hold on 1h bars
+# occupies sixty times the capital-time of twelve 1-minute bars, and reporting the wrong
+# figure would make a strategy that locks capital for a day look as cheap as one that holds
+# for an hour.
+DEFAULT_BAR_MINUTES = 1
+
 # An entry separated from the previous exit by at least this many bars counts as a
 # distinct episode rather than a continuation of the same move.
 DISTINCT_EPISODE_GAP_BARS = 30
@@ -758,7 +767,7 @@ def _strategy_exit_reason(*, proposal: StrategyProposal, position: _OpenPosition
 @financial
 def _risk_path(*, position: _OpenPosition, economics: RoundTripEconomics,
                holding_bars: int, exit_reason: str,
-               budget_mxn: Decimal) -> TradeRiskPath:
+               budget_mxn: Decimal, bar_minutes: int = DEFAULT_BAR_MINUTES) -> TradeRiskPath:
     """Assemble the forward-only risk path for one completed trip.
 
     MAE and MFE are the worst and best *net* counterfactual valuations the position
@@ -774,7 +783,7 @@ def _risk_path(*, position: _OpenPosition, economics: RoundTripEconomics,
         realised_gross_pnl_mxn=(economics.net_proceeds_mxn - budget_mxn
                                 + economics.total_friction_mxn),
         realised_net_pnl_mxn=economics.net_pnl_mxn,
-        holding_bars=holding_bars, holding_minutes=holding_bars * MINUTES_PER_BAR,
+        holding_bars=holding_bars, holding_minutes=holding_bars * bar_minutes,
         time_to_mae_bars=position.bars_to_worst,
         time_to_mfe_bars=position.bars_to_peak,
         exit_reason=exit_reason, observations=position.path_observations)
@@ -800,11 +809,16 @@ def replay_executable(*, candles: tuple[Candle, ...], profile_id: str, market: s
                       compatibility: str = COMPATIBLE,
                       modelled_slippage_bps: Decimal = Decimal("5"),
                       fill_delay_bars: int = DEFAULT_FILL_DELAY_BARS,
+                      bar_minutes: int = DEFAULT_BAR_MINUTES,
                       ) -> ExecutableReplayResult:
     """Replay one profile with delayed, executable fills and full cash-flow accounting.
 
     Signal bars and fill bars are distinct throughout. The guard is consulted with the
     price the order would actually pay, plus the friction the fill will actually bear.
+
+    `bar_minutes` only affects how holding time is reported. Fills, fees, guard verdicts
+    and risk boundaries are all computed in bars, so a coarser horizon changes nothing
+    about execution realism — it changes what a bar is worth in wall-clock capital-time.
     """
     if not candles:
         raise ExecutionError("replay requires at least one candle")
@@ -812,6 +826,8 @@ def replay_executable(*, candles: tuple[Candle, ...], profile_id: str, market: s
         raise ExecutionError("fill delay must be at least one bar")
     if budget_mxn <= ZERO:
         raise ExecutionError("budget must be positive")
+    if bar_minutes <= 0:
+        raise ExecutionError("bar duration must be positive")
 
     has_book = bool(bids) and bool(asks)
     base, quote = market.split("/", 1)
@@ -884,7 +900,8 @@ def replay_executable(*, candles: tuple[Candle, ...], profile_id: str, market: s
                 holding_bars = index - position.fill_index
                 risk_path = _risk_path(
                     position=position, economics=economics, holding_bars=holding_bars,
-                    exit_reason=queued_exit["reason"], budget_mxn=budget_mxn)
+                    exit_reason=queued_exit["reason"], budget_mxn=budget_mxn,
+                    bar_minutes=bar_minutes)
                 trips.append(ExecutableRoundTrip(
                     entry_signal_index=position.signal_index,
                     entry_fill_index=position.fill_index,

@@ -50,6 +50,63 @@ export interface ProductionGapView {
   production_mutations_required:string[];
 }
 
+export interface HorizonProfileView {
+  profile_id:string; strategy_id:string; version:string; fingerprint:string;
+  strategy_fingerprint:string;
+  timeframe:{version:string;name:string;seconds:number;base_bars:number;
+    label_convention:string};
+  concept:string; horizon_profile_version:string; description:string;
+}
+
+export interface HorizonResearchView {
+  hypothesis:string;
+  predeclared_timeframes:string[];
+  horizons_tested_by_rule:boolean;
+  profiles:HorizonProfileView[];
+  profile_ids:string[];
+  max_configurations_per_strategy_and_horizon:number;
+  configuration_budget:Record<string,number>;
+  selection_rule:string[];
+  all_configurations_retained:boolean;
+  certifying_execution_mode:string;
+  maker_bound_may_certify:boolean;
+  base_bar_seconds:number;
+  aggregation_uses_existing_base_bars:boolean;
+  incomplete_buckets_dropped_not_filled:boolean;
+  same_bar_fills_allowed:boolean;
+  outcomes:string[];
+  verdict:string|null;
+  verdict_pending_frozen_experiment:boolean;
+  frozen_profile_fingerprints_changed:boolean;
+  drawdown_policy_changed:boolean;
+  capital_limits_changed:boolean;
+}
+
+export interface MicrostructureCaptureView {
+  enabled:boolean;
+  provenance:string;
+  endpoints:string[];
+  order_capability:string;
+  production_mutation:string;
+  credentials_scope:string;
+  separate_from_production_ledger:boolean;
+  captured_books:string[];
+  order_book_events:number;
+  trade_tape_events:number;
+  capture_seconds:number;
+  health:string;
+  gaps:number;
+  duplicates:number;
+  sequence_regressions:number;
+  anomalies_repaired:number;
+  bounded_storage:boolean;
+  retention_hours:number;
+  queue_position_observable:boolean;
+  passive_fill_exactness:string;
+  adverse_selection_analysis_possible:boolean;
+  exact_passive_fill_claim_made:boolean;
+}
+
 export interface StrategyResearchView {
   research_version:string;
   promotion:string;
@@ -73,6 +130,8 @@ export interface StrategyResearchView {
     capital_limits_changed:boolean};
   execution_research?:ExecutionResearchView;
   production_gap?:ProductionGapView;
+  horizon_research?:HorizonResearchView;
+  microstructure_capture?:MicrostructureCaptureView;
 }
 
 /** Shadow rows carry whichever fields the pipeline produced; read them defensively. */
@@ -307,6 +366,134 @@ function ExecutionResearchPanel({research}:{research:StrategyResearchView}){
   </>;
 }
 
+/**
+ * Time-horizon research (MVP 0.2.4). This panel reports a *predeclared* experiment, not a
+ * result: the verdict is produced by a frozen manifest evaluated on real market data, and
+ * until that has run there is nothing to claim. Publishing the predeclared horizons, budget
+ * and selection rule up front is what makes the eventual verdict checkable.
+ */
+function HorizonPanel({research}:{research:StrategyResearchView}){
+  const horizon=research.horizon_research;
+  if(!horizon)return null;
+  return <>
+    <h3>Time-horizon research</h3>
+    <p>The same two concepts evaluated on a coarser horizon. A larger bar carries a larger
+      move, while friction is unchanged, so the share of the opportunity lost to costs should
+      fall. Whether that is worth trading depends on how often the larger target is reached
+      and how long capital is tied up, so capital-hours are reported beside every result.</p>
+    <div className="table"><table><tbody>
+      <tr><th>Hypothesis</th><td>{horizon.hypothesis}</td></tr>
+      <tr><th>Predeclared timeframes</th>
+        <td data-horizons={horizon.predeclared_timeframes.join(',')}>
+          {horizon.predeclared_timeframes.join(', ')}</td></tr>
+      <tr><th>Horizons tested by rule</th>
+        <td data-horizons-fixed={horizon.horizons_tested_by_rule}>
+          {horizon.horizons_tested_by_rule?'YES':'NO'}</td></tr>
+      <tr><th>Max configurations per strategy and horizon</th>
+        <td data-config-budget={horizon.max_configurations_per_strategy_and_horizon}>
+          {horizon.max_configurations_per_strategy_and_horizon}</td></tr>
+      <tr><th>All configurations retained</th>
+        <td data-all-configs-retained={horizon.all_configurations_retained}>
+          {horizon.all_configurations_retained?'YES':'NO'}</td></tr>
+      <tr><th>Certifying execution mode</th>
+        <td data-certifying-mode={horizon.certifying_execution_mode}>
+          {horizon.certifying_execution_mode}</td></tr>
+      <tr><th>Maker bound may certify</th>
+        <td data-maker-may-certify={horizon.maker_bound_may_certify}>
+          {horizon.maker_bound_may_certify?'YES':'NO'}</td></tr>
+      <tr><th>Incomplete buckets dropped, not filled</th>
+        <td data-incomplete-dropped={horizon.incomplete_buckets_dropped_not_filled}>
+          {horizon.incomplete_buckets_dropped_not_filled?'YES':'NO'}</td></tr>
+      <tr><th>Same-bar fills allowed</th>
+        <td data-same-bar-fills={horizon.same_bar_fills_allowed}>
+          {horizon.same_bar_fills_allowed?'YES':'NO'}</td></tr>
+      <tr><th>Drawdown policy changed</th>
+        <td data-horizon-drawdown-changed={horizon.drawdown_policy_changed}>
+          {horizon.drawdown_policy_changed?'YES':'NO'}</td></tr>
+      <tr><th>Verdict</th>
+        <td data-verdict-pending={horizon.verdict_pending_frozen_experiment}>
+          {horizon.verdict??'PENDING FROZEN EXPERIMENT'}</td></tr>
+    </tbody></table></div>
+
+    <h4>Horizon profiles</h4>
+    <div className="table"><table>
+      <thead><tr><th>Profile</th><th>Concept</th><th>Timeframe</th><th>Bars per bucket</th>
+        <th>Fingerprint</th></tr></thead>
+      <tbody>{horizon.profiles.map(profile=><tr key={profile.profile_id}
+        data-horizon-profile={profile.profile_id}
+        data-timeframe={profile.timeframe?.name}
+        data-concept={profile.concept}>
+        <td>{profile.profile_id}</td>
+        <td>{profile.concept}</td>
+        <td>{text(profile.timeframe?.name)}</td>
+        <td>{text(profile.timeframe?.base_bars)}</td>
+        <td><code>{text(profile.fingerprint).slice(0,16)}…</code></td></tr>)}
+      </tbody></table></div>
+  </>;
+}
+
+/**
+ * Forward microstructure capture (MVP 0.2.4). Candle history records a price range per
+ * interval and never a sequence, so it cannot show whether a resting order was ahead of the
+ * trades that printed at its price. That evidence only exists forward, and it comes with
+ * limits that are stated rather than glossed over.
+ */
+function MicrostructurePanel({research}:{research:StrategyResearchView}){
+  const capture=research.microstructure_capture;
+  if(!capture)return null;
+  return <>
+    <h3>Forward microstructure capture</h3>
+    <p>Order-book and trade-tape evidence collected read-only, kept separate from the
+      Production ledger. Queue position cannot be recovered from public data, so a passive
+      fill can be bounded but never claimed exactly. Anomalies are recorded, never repaired:
+      a forward-filled gap would look complete and would flatter a maker fill.</p>
+    <div className="table"><table><tbody>
+      <tr><th>Capturing</th><td data-capture-enabled={capture.enabled}>
+        {capture.enabled?'YES':'NO'}</td></tr>
+      <tr><th>Provenance</th>
+        <td data-capture-provenance={capture.provenance}>{capture.provenance}</td></tr>
+      <tr><th>Endpoints</th><td>{capture.endpoints.join(', ')}</td></tr>
+      <tr><th>Order capability</th>
+        <td data-order-capability={capture.order_capability}>
+          {capture.order_capability}</td></tr>
+      <tr><th>Production mutation</th>
+        <td data-capture-mutation={capture.production_mutation}>
+          {capture.production_mutation}</td></tr>
+      <tr><th>Separate from Production ledger</th>
+        <td data-capture-separate={capture.separate_from_production_ledger}>
+          {capture.separate_from_production_ledger?'YES':'NO'}</td></tr>
+      <tr><th>Books captured</th><td>{capture.captured_books.join(', ')||'NONE'}</td></tr>
+      <tr><th>Order-book events</th>
+        <td data-book-events={capture.order_book_events}>{capture.order_book_events}</td></tr>
+      <tr><th>Trade-tape events</th>
+        <td data-trade-events={capture.trade_tape_events}>{capture.trade_tape_events}</td></tr>
+      <tr><th>Capture duration (s)</th><td>{capture.capture_seconds}</td></tr>
+      <tr><th>Health</th><td data-capture-health={capture.health}>{capture.health}</td></tr>
+      <tr><th>Gaps</th><td data-capture-gaps={capture.gaps}>{capture.gaps}</td></tr>
+      <tr><th>Duplicates</th><td>{capture.duplicates}</td></tr>
+      <tr><th>Sequence regressions</th><td>{capture.sequence_regressions}</td></tr>
+      <tr><th>Anomalies repaired</th>
+        <td data-anomalies-repaired={capture.anomalies_repaired}>
+          {capture.anomalies_repaired}</td></tr>
+      <tr><th>Bounded storage</th>
+        <td data-bounded-storage={capture.bounded_storage}>
+          {capture.bounded_storage?`YES (${capture.retention_hours}h retention)`:'NO'}</td></tr>
+      <tr><th>Queue position observable</th>
+        <td data-queue-observable={capture.queue_position_observable}>
+          {capture.queue_position_observable?'YES':'NO'}</td></tr>
+      <tr><th>Passive fill exactness</th>
+        <td data-passive-exactness={capture.passive_fill_exactness}>
+          {capture.passive_fill_exactness}</td></tr>
+      <tr><th>Adverse-selection analysis possible</th>
+        <td data-adverse-selection={capture.adverse_selection_analysis_possible}>
+          {capture.adverse_selection_analysis_possible?'YES':'NO'}</td></tr>
+      <tr><th>Exact passive fill claimed</th>
+        <td data-exact-fill-claimed={capture.exact_passive_fill_claim_made}>
+          {capture.exact_passive_fill_claim_made?'YES':'NO'}</td></tr>
+    </tbody></table></div>
+  </>;
+}
+
 export function StrategyResearchPage({research}:
   {research:StrategyResearchView|undefined|null}){
   if(!research)return <article>
@@ -341,6 +528,8 @@ export function StrategyResearchPage({research}:
     <ProfileTable research={research}/>
     <RiskAdjustedPanel research={research}/>
     <ExecutionResearchPanel research={research}/>
+    <HorizonPanel research={research}/>
+    <MicrostructurePanel research={research}/>
     <ShadowTable rows={research.shadow}/>
     <MarketTable research={research}/>
 

@@ -4,7 +4,7 @@ import {MvpApp} from './MvpApp';
 
 class Events {addEventListener(){} close(){}}
 
-const stopped:any={product_version:'AutoFund MVP 0.2.3',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+const stopped:any={product_version:'AutoFund MVP 0.2.4',demo_mode:true,app_state:'STOPPED',auto_execution:false,
  session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
  risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
  realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'mean-reversion-safe',strategy_id:'mean_reversion',
@@ -87,7 +87,57 @@ const research:any={research_version:'autofund.production-market-selector.v1',
  production_gap:{missing:['cancel_capability','stale_order_handling'],
   partial:['limit_order_submission','price_field'],
   present:['open_order_monitoring','one_unresolved_order_invariant'],
-  production_mutations_required:['limit_order_submission','cancel_capability']}};
+  production_mutations_required:['limit_order_submission','cancel_capability']},
+ horizon_research:{hypothesis:'coarser horizons may make friction a smaller share of the opportunity',
+  predeclared_timeframes:['15m','1h'],horizons_tested_by_rule:true,
+  profiles:[
+   {profile_id:'volatility-mean-reversion-15m-v1',strategy_id:'volatility_mean_reversion_horizon',
+    version:'0.1',fingerprint:'a'.repeat(64),strategy_fingerprint:'b'.repeat(64),
+    timeframe:{version:'autofund.time-horizon.v1',name:'15m',seconds:900,base_bars:15,
+     label_convention:'BUCKET_OPEN'},
+    concept:'volatility_mean_reversion',horizon_profile_version:'autofund.horizon-profile.v1',
+    description:'mean reversion on 15m'},
+   {profile_id:'volatility-mean-reversion-1h-v1',strategy_id:'volatility_mean_reversion_horizon',
+    version:'0.1',fingerprint:'c'.repeat(64),strategy_fingerprint:'d'.repeat(64),
+    timeframe:{version:'autofund.time-horizon.v1',name:'1h',seconds:3600,base_bars:60,
+     label_convention:'BUCKET_OPEN'},
+    concept:'volatility_mean_reversion',horizon_profile_version:'autofund.horizon-profile.v1',
+    description:'mean reversion on 1h'},
+   {profile_id:'range-expansion-15m-v1',strategy_id:'range_expansion_horizon',
+    version:'0.1',fingerprint:'e'.repeat(64),strategy_fingerprint:'f'.repeat(64),
+    timeframe:{version:'autofund.time-horizon.v1',name:'15m',seconds:900,base_bars:15,
+     label_convention:'BUCKET_OPEN'},
+    concept:'range_expansion',horizon_profile_version:'autofund.horizon-profile.v1',
+    description:'range expansion on 15m'},
+   {profile_id:'range-expansion-1h-v1',strategy_id:'range_expansion_horizon',
+    version:'0.1',fingerprint:'7'.repeat(64),strategy_fingerprint:'8'.repeat(64),
+    timeframe:{version:'autofund.time-horizon.v1',name:'1h',seconds:3600,base_bars:60,
+     label_convention:'BUCKET_OPEN'},
+    concept:'range_expansion',horizon_profile_version:'autofund.horizon-profile.v1',
+    description:'range expansion on 1h'}],
+  profile_ids:['volatility-mean-reversion-15m-v1','volatility-mean-reversion-1h-v1',
+   'range-expansion-15m-v1','range-expansion-1h-v1'],
+  max_configurations_per_strategy_and_horizon:4,
+  configuration_budget:{'volatility_mean_reversion:15m':4,'volatility_mean_reversion:1h':4,
+   'range_expansion:15m':4,'range_expansion:1h':4},
+  selection_rule:['risk_gates_satisfied','friction_ratio_ascending',
+   'net_pnl_per_capital_hour_descending','net_pnl_descending'],
+  all_configurations_retained:true,certifying_execution_mode:'TAKER_TAKER',
+  maker_bound_may_certify:false,base_bar_seconds:60,
+  aggregation_uses_existing_base_bars:true,incomplete_buckets_dropped_not_filled:true,
+  same_bar_fills_allowed:false,
+  outcomes:['LONGER_HORIZON_PROMISING','NO_HORIZON_EDGE','INSUFFICIENT_HORIZON_EVIDENCE','BLOCKED'],
+  verdict:null,verdict_pending_frozen_experiment:true,
+  frozen_profile_fingerprints_changed:false,drawdown_policy_changed:false,
+  capital_limits_changed:false},
+ microstructure_capture:{enabled:true,provenance:'REAL_CAPTURED_MICROSTRUCTURE',
+  endpoints:['order_book','trades'],order_capability:'NONE',production_mutation:'NONE',
+  credentials_scope:'READ_ONLY_PUBLIC_ENDPOINTS',separate_from_production_ledger:true,
+  captured_books:['btc_mxn','eth_mxn','sol_mxn','xrp_mxn'],order_book_events:120,
+  trade_tape_events:340,capture_seconds:3600,health:'HEALTHY',gaps:0,duplicates:2,
+  sequence_regressions:0,anomalies_repaired:0,bounded_storage:true,retention_hours:72,
+  queue_position_observable:false,passive_fill_exactness:'BOUNDED_ONLY',
+  adverse_selection_analysis_possible:true,exact_passive_fill_claim_made:false}};
 
 beforeEach(()=>{vi.stubGlobal('EventSource',Events);vi.stubGlobal('fetch',vi.fn().mockResolvedValue({json:async()=>({control_token:'token'})}))});
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
@@ -246,4 +296,86 @@ test('the Production architecture gap is reported with its required mutations',(
  const mutations=document.querySelector('[data-gap-mutations="2"]');
  expect(mutations).toBeTruthy();
  expect(mutations?.textContent).toContain('cancel_capability');
+});
+
+test('the horizon experiment is shown as predeclared with exactly two timeframes',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Time-horizon research')).toBeTruthy();
+ expect(document.querySelector('[data-horizons="15m,1h"]')).toBeTruthy();
+ expect(document.querySelector('[data-horizons-fixed="true"]')).toBeTruthy();
+});
+
+test('the parameter budget is bounded and every configuration is retained',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-config-budget="4"]')).toBeTruthy();
+ expect(document.querySelector('[data-all-configs-retained="true"]')).toBeTruthy();
+});
+
+test('the horizon verdict is withheld until the frozen experiment runs',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ // No verdict is published: the page must not imply a finding that has not been measured.
+ expect(document.querySelector('[data-verdict-pending="true"]')).toBeTruthy();
+ expect(screen.getByText('PENDING FROZEN EXPERIMENT')).toBeTruthy();
+});
+
+test('only taker execution may certify and the maker bound never can',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-certifying-mode="TAKER_TAKER"]')).toBeTruthy();
+ expect(document.querySelector('[data-maker-may-certify="false"]')).toBeTruthy();
+});
+
+test('the four horizon profiles are shown with their timeframe and bucket size',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const rows=document.querySelectorAll('[data-horizon-profile]');
+ expect(rows.length).toBe(4);
+ const hourly=Array.from(rows)
+   .filter(row=>row.getAttribute('data-timeframe')==='1h');
+ expect(hourly.length).toBe(2);
+ expect(hourly[0].textContent).toContain('60');
+});
+
+test('no same-bar fill and no bucket filling is claimed at any horizon',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-same-bar-fills="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-incomplete-dropped="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-horizon-drawdown-changed="false"]')).toBeTruthy();
+});
+
+test('microstructure capture is shown as read-only and separate from the ledger',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Forward microstructure capture')).toBeTruthy();
+ expect(document.querySelector('[data-order-capability="NONE"]')).toBeTruthy();
+ expect(document.querySelector('[data-capture-mutation="NONE"]')).toBeTruthy();
+ expect(document.querySelector('[data-capture-separate="true"]')).toBeTruthy();
+});
+
+test('capture provenance is REAL_CAPTURED_MICROSTRUCTURE and anomalies are not repaired',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector(
+   '[data-capture-provenance="REAL_CAPTURED_MICROSTRUCTURE"]')).toBeTruthy();
+ expect(document.querySelector('[data-anomalies-repaired="0"]')).toBeTruthy();
+ expect(document.querySelector('[data-capture-gaps="0"]')).toBeTruthy();
+});
+
+test('queue position is reported unobservable and passive fill bounded only',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-queue-observable="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-passive-exactness="BOUNDED_ONLY"]')).toBeTruthy();
+ // An exact fill claim would overstate evidence that public data cannot provide.
+ expect(document.querySelector('[data-exact-fill-claimed="false"]')).toBeTruthy();
+});
+
+test('capture storage is bounded so a long run cannot fill the disk',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-bounded-storage="true"]')).toBeTruthy();
 });
