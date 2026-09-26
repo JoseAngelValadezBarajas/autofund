@@ -434,6 +434,21 @@ def test_digest_changes_when_a_record_changes() -> None:
 # ---- path safety (§37) --------------------------------------------------------------------------
 
 
+def _assert_refused_or_contained(root: Path, relative: str) -> None:
+    """The guarantee for any caller-supplied path: refused, or inside the root. Never outside.
+
+    Stated once and reused because the two platform-dependent tests below differ only in which of
+    the two outcomes occurs, while the guarantee is identical. Expressed as a disjunction after
+    asserting a single outcome failed in CI on the other operating system.
+    """
+    try:
+        resolved = resolve_artifact_path(root=root, relative=relative)
+    except ArtifactIndexError:
+        return  # refused, the stricter outcome
+    assert is_within(root=root, candidate=resolved), (
+        f"{relative!r} resolved outside the artifact root to {resolved}")
+
+
 def test_absolute_path_is_rejected() -> None:
     """A POSIX absolute path must be refused on every platform.
 
@@ -447,25 +462,54 @@ def test_absolute_path_is_rejected() -> None:
         resolve_artifact_path(root=ARTIFACTS_ROOT, relative=str(Path("/etc/passwd")))
 
 
-def test_windows_absolute_path_is_rejected() -> None:
-    """The Windows form, asserted separately because it is not absolute on POSIX."""
-    with pytest.raises(ArtifactIndexError):
-        resolve_artifact_path(root=ARTIFACTS_ROOT, relative="C:/Windows/System32/drivers/etc/hosts")
+def test_no_hostile_path_ever_escapes_the_root(tmp_path: Path) -> None:
+    """The cross-platform invariant: a path is either refused, or contained. Never outside.
 
+    Asserting *which* of the two happens is what made this test platform-dependent, and it was
+    wrong twice. On Windows `C:/etc/passwd` is absolute, so it is refused; on POSIX it is a relative
+    path whose first component is literally `C:`, so it is joined onto the root and contained. Both
+    outcomes are safe and neither is a gap, so the guarantee worth pinning is the disjunction.
 
-def test_a_drive_relative_path_cannot_escape_the_root(tmp_path: Path) -> None:
-    """A path that is neither absolute nor contains `..` must still resolve inside the root.
-
-    `C:/logs/application.log` is absolute on Windows and so is rejected by the absolute check -
-    asserted separately above. The genuinely drive-relative form is `C:logs/x.log`, which `Path`
-    reports as *not* absolute while still carrying a drive. That is the input the containment check
-    exists for, and asserting it here pins the behaviour on the platform where the distinction is
-    real rather than skipping it.
+    This is the property a reader actually cares about: whatever the operating system makes of a
+    caller-supplied string, the function cannot hand back a path outside the artifact root.
     """
-    if Path("C:logs/x.log").drive == "":
-        pytest.skip("drive-relative paths only exist on Windows")
-    resolved = resolve_artifact_path(root=tmp_path, relative="C:logs/x.log")
-    assert is_within(root=tmp_path, candidate=resolved)
+    hostile = [
+        "C:/etc/passwd",
+        "C:/Windows/System32/drivers/etc/hosts",
+        "C:logs/x.log",
+        "../../pyproject.toml",
+        "mvp/../../../etc/passwd",
+        "..",
+        "../..",
+        "a/../../b",
+    ]
+    for relative in hostile:
+        try:
+            resolved = resolve_artifact_path(root=tmp_path, relative=relative)
+        except ArtifactIndexError:
+            continue  # refused, which is the stricter of the two acceptable outcomes
+        assert is_within(root=tmp_path, candidate=resolved), (
+            f"{relative!r} resolved outside the artifact root to {resolved}")
+
+
+def test_windows_absolute_path_is_handled_safely() -> None:
+    """A Windows-style absolute path is refused on Windows and contained on POSIX.
+
+    Asserted as the disjunction rather than as "refused", because which one happens depends on the
+    host: on Windows `C:/Windows/...` is absolute and refused, while on POSIX it is a relative path
+    whose first component is literally `C:` and is joined inside the root. Both are safe. Asserting
+    the refusal is what failed in CI on Linux.
+    """
+    _assert_refused_or_contained(ARTIFACTS_ROOT, "C:/Windows/System32/drivers/etc/hosts")
+
+
+def test_drive_relative_path_is_handled_safely() -> None:
+    """`C:logs/x.log` carries a drive without being absolute, which only Windows produces.
+
+    On Windows the drive replaces the root during the join, so the containment check rejects it; on
+    POSIX it is an ordinary relative path and is contained. The guarantee is the same either way.
+    """
+    _assert_refused_or_contained(ARTIFACTS_ROOT, "C:logs/x.log")
 
 
 def test_parent_traversal_is_rejected() -> None:
