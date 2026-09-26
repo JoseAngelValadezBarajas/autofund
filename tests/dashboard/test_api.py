@@ -7,7 +7,15 @@ from autofund.dashboard.service import DashboardDataProvider
 
 
 def client() -> TestClient:
-    return TestClient(create_app(DashboardDataProvider(Path(__file__).parents[2] / "artifacts" / "f4" / "live_session")))
+    """A dashboard over a deterministic fixture, not over this machine's artifacts.
+
+    The provider was previously pointed at `artifacts/f4/live_session`, which is a real captured
+    shadow session and is gitignored. Every assertion below failed in a fresh clone for that reason
+    alone, which made the suite unable to pass on a machine that had not run an F4 capture. The
+    provider has a demo projection built from a committed fixture, so the read-only contract can be
+    tested without private runtime state.
+    """
+    return TestClient(create_app(DashboardDataProvider(Path("."), demo=True)))
 
 
 def test_get_only_models_keep_money_as_strings() -> None:

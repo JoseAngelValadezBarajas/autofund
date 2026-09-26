@@ -74,11 +74,28 @@ PRODUCTION_FEE = D("0.0078")
 # used to make the guard accept something the real account could not afford.
 VIABLE_FEE = D("0.0001")
 
-# The real reference position. 0.1.3 was specified against it, so it is the
-# position the economic model must reproduce.
-REAL_QUANTITY = D("0.00000727")
-REAL_COST_BASIS = D("10.91486406")
-REAL_AVERAGE_COST = REAL_COST_BASIS / REAL_QUANTITY
+# A synthetic reference position.
+#
+# 0.1.3 was specified against a real position, and those exact figures were once recorded here.
+# They have been replaced: this is a public repository, and a specific quantity and cost basis
+# recovered from a real account is personal financial state rather than test infrastructure.
+#
+# The synthetic figures are sized to preserve every property the tests depend on. The cost basis
+# sits inside the product's own single-order cap (11 MXN) and max-deployment limit (25 MXN),
+# because a fixture that violated the envelope would be refused by accounting rather than
+# exercised by it. And at the account's confirmed 78 bps fee the strategy's own exit target still
+# cannot clear break-even - which is the whole point of the fixture. A synthetic position that
+# cleared break-even would have silently inverted the tests below.
+SYNTHETIC_QUANTITY = D("0.000006")
+SYNTHETIC_COST_BASIS = D("9.00000000")
+SYNTHETIC_AVERAGE_COST = SYNTHETIC_COST_BASIS / SYNTHETIC_QUANTITY
+
+# Kept as the names the rest of this module already uses, so the intent at every call site is
+# unchanged and the substitution reads as a single edit.
+REAL_QUANTITY = SYNTHETIC_QUANTITY
+REAL_COST_BASIS = SYNTHETIC_COST_BASIS
+REAL_AVERAGE_COST = SYNTHETIC_AVERAGE_COST
+
 
 
 @pytest.fixture

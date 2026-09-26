@@ -33,3 +33,12 @@
 .control-center dl{grid-template-columns:220px 1fr}
 @media(max-width:720px){.control-center dl{grid-template-columns:1fr 1fr}}
 .cc-panel{margin:18px 0}.cc-panel>h3{margin-top:0}
+
+/* ---- Provenance banner (0.3.0-public) ----
+   A dashboard showing a balance and a P&L is easy to read as a real account's performance. The
+   synthetic banner is deliberately loud so a screenshot cannot be mistaken for one. */
+.cc-banner{display:flex;flex-direction:column;gap:6px;margin:14px 0;padding:14px 16px;border-radius:8px;border:2px solid #27364b;background:#111c2c}
+.cc-banner strong{font-size:15px;letter-spacing:.04em}
+.cc-banner span{color:#aac0d2;font-size:12px;overflow-wrap:anywhere}
+.cc-banner-synthetic{border-color:#ffbf69;background:#332315}
+.cc-banner-synthetic strong{color:#ffcf8c}

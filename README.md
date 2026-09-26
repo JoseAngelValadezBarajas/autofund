@@ -1,333 +1,290 @@
-# AutoFund MVP 0.3.0
+# AutoFund
 
-AutoFund is a bounded local quantitative research, validation and execution
-platform for BTC/MXN. It discovers information sources, tests whether they are
-economically usable at real venue friction, and executes only when a human
-explicitly authorizes a session. Its normal entry point is:
+**AutoFund tests whether a trading idea deserves capital before allowing it to trade.**
+
+It is an evidence-driven research and execution platform. A hypothesis has to survive development,
+out-of-sample validation, forward capture, economic validation, risk validation and certification
+before a human is even offered the option to authorize a session. Most hypotheses do not survive,
+and the system's answer is then `NO_TRADE`.
+
+This repository is public and source-available. **No license has been selected yet**, so it is not
+yet open source in the legal sense — see [Licensing](#licensing).
+
+```text
+FRESH CLONE → INSTALL → DEMO MODE → RESEARCH CONTROL CENTER
+            → SYNTHETIC EVIDENCE → FULL TEST SUITE
+            → ZERO CREDENTIALS → ZERO REAL MONEY → ZERO EXCHANGE MUTATION
+```
+
+---
+
+## Quick start
+
+Requires **Python 3.11+** and **Node.js 20+**. No exchange account, no credentials and no network
+access to any exchange.
+
+### Windows (PowerShell)
 
 ```powershell
+git clone <repository-url> autofund
+cd autofund
+
+python -m venv .venv
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install -e ".[dev]"
+
 cd frontend
 npm ci
 npm run build
 cd ..
-autofund app
+
+.venv\Scripts\autofund demo
 ```
 
-The application binds `http://127.0.0.1:8000`, opens the default browser once,
-reconciles durable state and remains **STOPPED** until the operator authorizes a
-real-money session in the web control plane. The fixed product envelope is 50 MXN
-authorized capital, 25 MXN maximum deployment and 11 MXN maximum single order.
-STOP and EMERGENCY KILL remain available while running. The browser has no direct
-BUY, SELL, order, cancellation, withdrawal or transfer endpoint.
+### macOS / Linux
 
-See [MVP specification](docs/MVP_0_1_SPEC.md),
-[0.1.1 learning, postmortem and market discovery](docs/MVP_0_1_1_LEARNING_SPEC.md),
-[telemetry](docs/TELEMETRY_SPEC.md), [adaptive learning](docs/ADAPTIVE_LEARNING_SPEC.md),
-and the [operations runbook](docs/OPERATIONS_RUNBOOK.md). Lower-level `shadow`,
-`dashboard`, `bitso-prod` and `live` commands remain engineering and certification tools.
+```bash
+git clone <repository-url> autofund
+cd autofund
 
-## What 0.3.0 adds — the Research Control Center
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e ".[dev]"
 
-Milestones 0.1.3 through 0.2.8 produced eleven experiments' worth of capability and
-evidence, most of it negative, held in artifacts rather than in a product. 0.3.0 adds
-no new strategy and no new alpha investigation. It adds the observability layer that
-makes the existing work accountable: a **Research Control Center** that answers the
-questions an operator actually has, without inventing answers it cannot support.
+cd frontend
+npm ci
+npm run build
+cd ..
 
-### Three truths that stay separate
+.venv/bin/autofund demo
+```
 
-The central product invariant is that these are four independent facts and are never
-combined into a single status:
+The application starts on <http://127.0.0.1:8000> and opens a browser. Open the **Control Center**
+page in the left navigation.
 
-| Dimension | Question | Source of truth |
-|---|---|---|
-| **Engineering state** | Is the system running correctly? | ledger, execution, market data, collectors |
-| **Research-economic evidence** | Is there a measured, economically usable edge? | certifications, captures, frozen policies |
-| **Operational authorization** | Has a human authorized a live session? | the session state machine |
-| **Current action** | What is AutoFund doing right now? | the trading loop |
-
-A green engineering state must never read as profitable evidence. Positive research
-evidence must never read as permission to trade. The `exchange wallet` is never summed
-with AutoFund's own inventory. Production authorization **fails closed**: only the
-single `RUNNING` state authorizes, so every state the code has not been taught about —
-and any state a future version adds — is unauthorized by default rather than by
-omission.
-
-### The Control Center
-
-Ten read-only views, served from `/api/v1/research`, over a registry rebuilt
-deterministically from the artifacts already on disk:
-
-- **Overview** — the four separated truths, portfolio, system health, evidence quality
-  and production readiness.
-- **Alpha Registry** — information sources. A source that predicts is reported
-  separately from a source that is economically usable. The one validated signal shows
-  its real measurement (2.5136 bps of movement) against its real required friction
-  (173.00 bps) and a headroom of −170.49 bps.
-- **Strategy Registry** — four separated verdicts per profile. A strategy can be
-  engineering `PASS` and economic `FAIL`, and here several are.
-- **Experiment Registry** — every milestone with its hypothesis, its predeclared
-  windows and its outcome. A negative result is recorded as a result.
-- **Evidence Explorer** — provenance per record. A synthetic fixture is not a real
-  observation, and only the latter can support a conclusion.
-- **Campaigns** — process health and evidence conclusion reported separately. A
-  perfectly healthy collector can still have produced nothing usable: the cross-venue
-  capture covered 0.176 of the 72 hours it predeclared, so it could not have observed a
-  rare event, and the page says so instead of reporting its absence as a market finding.
-- **Activity timeline** — research and production events. Financial events are *not*
-  duplicated here; they keep their authoritative source in the production journal.
-- **Production eligibility** — a deterministic blocking reason for every market and
-  profile pair, so "not selected" is never ambiguous.
-- **Artifact index** — every indexed artifact with a fingerprint, excluding the
-  registry's own output.
-
-### What it does not do
-
-There is **no** BUY/SELL control, order ticket, quantity box or manual trade control
-anywhere in the Control Center, and **no write endpoint** on the research API. A test
-asserts every research route is a read. Unknown values are reported as `UNKNOWN`,
-`NOT_RECORDED` or `NOT_APPLICABLE` rather than invented. MAE and MFE are reported as
-`NOT_RECORDED` where no capture exists that could produce them.
-
-This milestone adds no strategy, changes no certification threshold, no risk limit and
-no economic policy. The `EconomicEdgeGuard`, `RiskEngine`, strategy parameters, capital
-limits and exchange mutation allowlist are unchanged.
-
-**This milestone is not a claim of profitability.** It makes the current position
-legible: one predictive and economically unusable signal, three frozen strategies,
-zero certified opportunities and Production authorized by no session.
-
-## What 0.1.1 adds
-
-Sessions now persist `started_at`, `ended_at` and a canonical `stop_reason`, and a
-completed session's elapsed time is frozen. A normally stopped session reports
-runtime **INACTIVE** and retains its last known market quality instead of looking
-STALE or INVALID. Pipeline stages a completed decision path never reached report
-`NOT_APPLICABLE` rather than `UNKNOWN`.
-
-Every strategy evaluation persists the deterministic evidence the Champion
-actually used — features, thresholds, `reason_code` and `distance_to_signal` — and
-feeds it to `AdaptiveEngine` as a `LEARNING_OBSERVATION` at session completion.
-`report.json`, `checkpoint_summary.json` and `handoff.json` are upgraded to
-versioned deterministic postmortem artifacts.
-
-A **read-only Market Opportunity Scanner** discovers the MXN universe dynamically
-from the exchange's available-books response and scores tradability-adjusted
-opportunity (never raw volatility) after hard eligibility filters. It is research
-beside Production: it cannot create an order intent, cannot change the live market
-or the Champion, and cannot halt a valid session.
-
-**The Production market remains BTC/MXN. Multi-market real trading is not
-enabled.** Automatic market rotation and promotion of another market to real-money
-eligibility are DISABLED.
-
-## Live SHADOW monitoring (F4.6)
-
-Build the local SPA once (`cd frontend`, `npm ci`, `npm run build`).
-`autofund shadow run --output artifacts/f4/my_session --duration 240 --closed-candles 2`
-starts/reuses the localhost dashboard and opens the OS default browser once.
-Runtime status, heartbeat, accepted OPEN candle, closed candles and activity update
-while the session runs. `--no-open-dashboard` skips automatic server/browser startup.
-Browser failure never changes risk/accounting/execution behavior.
-
-To retain the dashboard after completion, run `autofund dashboard` separately;
-the runner reuses it and leaves it running with STOPPED. Default URL:
-http://127.0.0.1:8000. Built frontend assets load without external Internet.
-`autofund dashboard --demo-live` offers a credential-free simulated live display,
-clearly marked DEMO DATA. Dashboard monitoring remains GET/SSE only.
-See [F4.6 observability specification](docs/F4_6_LIVE_OBSERVABILITY_SPEC.md) for
-contracts, limits, test commands and certification evidence. No F5 is implemented.
-
-**F0 IS NOT A PROFITABLE TRADING SYSTEM.**
-**F1 IS NOT A PROFITABLE TRADING SYSTEM.**
-
-AutoFund contiene un n?cleo financiero paper en MXN y un replay hist?rico local,
-determinista y auditable. Python 3.12+. F0/F1 no importan librerias externas; F2 usa HTTPX y websockets.
-F2 observa datos publicos de Binance Spot, sin cuentas ni ordenes. No usa dinero real. La ?nica estrategia
-es un dummy deliberadamente sencillo; no hay b?squeda de rentabilidad.
-
-F0 est? congelado en `066a54c`: su c?digo, pruebas, especificaci?n y demo no se
-modifican para F1. El nuevo paquete `autofund.replay` utiliza Wallet,
-CapitalManager, RiskEngine y PaperExecutionEngine mediante sus contratos.
-
-
-## F4 - Bitso Production read-only and shadow trading
-
-## F4.5 - local monitoring dashboard
-
-F4.5 adds a local FastAPI + React dashboard over F4 artifacts. It is GET-only,
-shows shadow data only, and visibly labels Production trading as disabled.
+To start without opening a browser, or on a different port:
 
 ```powershell
-autofund dashboard --demo
-autofund dashboard --session artifacts/f4/live_session
+.venv\Scripts\autofund demo --no-open-browser --port 8080
 ```
 
-See [F4.5 dashboard specification](docs/F4_5_DASHBOARD_SPEC.md).
-
-F4 adds a dedicated GET-only Production observer and deterministic virtual
-execution on real public trades/order-book snapshots. Real account balances are
-private by default and never fund the shadow wallet. Defaults are 50 MXN virtual
-capital, 25 MXN maximum deployment and a 10 MXN single-order cap.
-
-`autofund bitso-prod status` requires dedicated read-only Production credentials
-and operator confirmation in environment variables. `autofund shadow run`
-requires no credentials by default. Capture, replay and daily/weekly reports are
-available; real Production execution is not implemented.
-
-[F4_SPEC](docs/F4_SPEC.md) contains commands, API sources, security boundaries,
-recovery policy and certification results. Authentication passed. The real
-10-candle capture has exact replay parity and **DEGRADED** data quality due to
-stale snapshots and out-of-order trades; it is not a benchmark candidate.
-
-## F3 - Bitso Stage execution
-
-F3 adds manual Bitso **Stage-only** execution and reconciliation on baseline
-`3facf25`. F0/F1/F2 remain frozen. Production, withdrawals and autonomous strategy
-execution are unavailable. HTTPX is reused; no dependency was added.
-
-Credentials are read only from `AUTOFUND_BITSO_STAGE_API_KEY` and
-`AUTOFUND_BITSO_STAGE_API_SECRET`. Never commit credentials or pass them in CLI
-arguments. `.env`, `*.secret` and `keys.json` are ignored; no file credential
-loader is provided.
+### Running the tests
 
 ```powershell
-.venv\Scripts\python -m pip install -e . --no-deps
-.venv\Scripts\autofund bitso-stage market-info btc_mxn
-.venv\Scripts\autofund bitso-stage status
-.venv\Scripts\autofund bitso-stage order-test --single-order-cap 11
-# Only with authorized Stage credentials; explicit order placement:
-.venv\Scripts\autofund bitso-stage order-test --single-order-cap 11 --confirm-stage
-.venv\Scripts\python -m pytest -q
-.venv\Scripts\python -m pytest -m stage -q
+.venv\Scripts\python -m pytest tests -m "not live and not stage"   # backend
+cd frontend
+npx tsc --noEmit -p tsconfig.json                                   # frontend types
+npx vitest run                                                      # frontend unit
+npm run build; npx playwright test                                  # end-to-end
 ```
 
-Without `--confirm-stage`, order-test is a dry run. The local allocation is
-50 MXN with at most 25 MXN deployment, independent of exchange account wealth.
-The single-order cap is explicit. An ambiguous POST is never blindly repeated;
-confirmed fills update F0 once and a durable journal supports restart recovery.
-
-[F3_SPEC](docs/F3_SPEC.md) documents API sources, safety, fees, accounting and
-recovery. Offline certification passes; authenticated Stage certification is
-**pending authorized Stage credentials**. The local certification artifact
-reports SKIPPED; no order was submitted during this implementation run.
-
-## F2 - public market capture
-
-**F2 HAS NO ORDER CAPABILITY.** Baseline F0/F1: `2781c71`, unchanged.
-Only public metadata and UTC kline streams; no API keys, secrets or .env.
+### Verifying the public safety boundary
 
 ```powershell
-.venv\Scripts\python -m pip install -e ".[dev]"
-.venv\Scripts\autofund market info --symbol BTCMXN
-.venv\Scripts\autofund market capture --symbol BTCMXN --interval 1s --closed-candles 5 --max-seconds 45 --output artifacts/my_session.jsonl
-.venv\Scripts\autofund market replay artifacts/my_session.jsonl
-.venv\Scripts\python -m pytest -q
-.venv\Scripts\python -m pytest -m live -q
+.venv\Scripts\python scripts\secret_scan.py                  # credentials in the working tree
+.venv\Scripts\python scripts\history_secret_audit.py         # credentials in all Git history
+.venv\Scripts\python scripts\demo_smoke.py                   # demo cannot reach an exchange
 ```
 
-Normal tests are offline; `-m live` opts into real public connectivity.
-Capture writes normalized JSONL, raw JSONL and a manifest next to the requested
-path. Existing bundles are not overwritten. Copy all three files for replay.
-A capture ends at N unique closed candles, a time limit or Ctrl+C; partial sessions
-are finalized. For longer observations use `--interval 1m --closed-candles 10`.
+---
 
-The unchanged F1 strategy receives only accepted closed candles with a fixed
-neutral snapshot. Outputs are directional WOULD_BUY/NO_ACTION observations, with
-no sizing, positions or execution. F2 market-data replay proves event/signal parity;
-it is distinct from F1 trading replay. Quality is VALID, DEGRADED or INVALID.
-Only valid MXN sessions export to F1 by default; no FX conversion is invented.
+## Demo mode
 
-[docs/F2_SPEC.md](docs/F2_SPEC.md) freezes official sources, metadata, lifecycle,
-quality policies, capture schema, golden parity, dependency audit and live evidence.
-The live BTC/MXN sample achieved five closed candles and exact offline parity.
+Demo mode is **the default**, and it is a mode rather than a separate application: the same code
+path runs, with the mode deciding what it is permitted to reach.
 
-## Instalaci?n y pruebas
+- Uses a generated synthetic dataset. **Every figure is invented** and labelled `SYNTHETIC_DEMO`.
+- Requires no credentials. If credentials *are* present in your environment, Demo mode **removes
+  them from the process** for the duration of the run and restores them afterwards, so a dependency
+  or a subprocess cannot pick them up.
+- Makes no authenticated exchange request and no exchange mutation. Both are asserted after startup,
+  and a violation aborts the process.
+- Writes to `artifacts/demo`, never to the directory a real run reads.
 
-Desde `C:\Dev\Negocios\autofund`, en PowerShell:
+The demo dataset is not a backtest. It is not historical performance and not any account's
+performance. It exists to show the research workflow.
 
-```powershell
-python -m venv .venv
-.venv\Scripts\python -m pip install -e ".[dev]"
-.venv\Scripts\python -m pytest -q
-.venv\Scripts\python examples/f0_demo.py
-.venv\Scripts\python examples/f1_demo.py
-.venv\Scripts\python examples/f1_demo.py --output artifacts/f1_demo.json
+### Modes
+
+| Mode | Command | Credentials | Exchange access | Can place an order |
+|---|---|---|---|---|
+| `demo` | `autofund demo` (default) | none | none | **no** |
+| `shadow` | `autofund app --mode shadow` | none | public data, read-only | **no** |
+| `production` | `autofund app --mode production` | required | authenticated | only after explicit per-session authorization |
+
+An unrecognised `AUTOFUND_MODE` is an error. AutoFund refuses to guess, because guessing wrong in
+the production direction spends money.
+
+Configuration is documented in [`.env.example`](.env.example) — variable names and placeholders
+only, with no values.
+
+---
+
+## The philosophy
+
+```mermaid
+flowchart TD
+    H[Hypothesis] --> D[Development]
+    D --> HO[Holdout]
+    HO --> F[Forward evidence]
+    F --> E[Economic validation]
+    E --> R[Risk validation]
+    R --> C[Certification]
+    C --> A[Operator authorization]
+    A --> X[Execution]
+    D -.->|no edge| N[NO TRADE]
+    HO -.->|does not replicate| N
+    F -.->|not captured| N
+    E -.->|cannot pay friction| N
+    R -.->|risk too large| N
+    C -.->|not certified| N
 ```
 
-En Linux/macOS usar `.venv/bin/python`. pytest es una dependencia de desarrollo.
-El JSON es opcional y contiene datos, par?metros, se?ales, resultados de
-intenciones, fills, ledger, posiciones, curva de equity, m?tricas y fingerprints.
-`artifacts/` es local y no se versiona. No se necesitan claves ni servicios.
+Every stage may end in `NO_TRADE`, and that is a valid system decision rather than a failure. Three
+distinctions run through the whole design:
 
-## Ejecutar F1 desde Python
+- **Predictive is not profitable.** An information source can predict direction and still be unable
+  to pay the round trip. AutoFund reports those as two separate findings.
+- **Engineering correctness is not strategy evidence.** Tests passing says the system works, not
+  that a strategy makes money. `EngineeringView.says_nothing_about_profitability` is `true` by
+  design.
+- **Strategy evidence is not production authorization.** Evidence can be strong and a session can
+  still be unauthorized. They are separate fields and are never combined into one status.
 
-```python
-from decimal import Decimal
-from autofund.replay import (
-    ReplayConfig, ReplayRunner, SimpleMeanReversionV0, load_csv,
-)
+The project's own research record is mostly negative, and publishing it is deliberate: the ability
+to reject a hypothesis before it risks capital is the feature.
 
-dataset = load_csv("examples/data/mean_reversion_market.csv", market="BTC/MXN")
-config = ReplayConfig(
-    initial_equity=Decimal("50"),
-    fee_rate=Decimal("0.01"),
-    slippage_bps=Decimal("100"),
-)
-strategy = SimpleMeanReversionV0(allocation_fraction=Decimal("0.20402"))
-result = ReplayRunner(config).run(dataset=dataset, strategy=strategy)
-assert result.metrics.final_equity_mxn == Decimal("49.6")
-assert result == ReplayRunner(config).run(dataset=dataset, strategy=strategy)
-print(result.result_fingerprint)
+---
+
+## What AutoFund does
+
+| Capability | Status |
+|---|---|
+| Deterministic research and replay engine | Implemented |
+| `EconomicEdgeGuard` — fee-aware admission | Implemented |
+| `RiskEngine` — position sizing and drawdown policy | Implemented |
+| Research registry, rebuilt deterministically from artifacts | Implemented |
+| Alpha / strategy / experiment registries | Implemented |
+| Evidence provenance, including synthetic vs measured | Implemented |
+| Development / holdout separation and forward capture | Implemented |
+| MAE / MFE path metrics, reported as `NOT_RECORDED` when absent | Implemented |
+| Multi-market MXN data with fee-schedule verification | Implemented |
+| Execution recovery and uncertain-order reconciliation | Implemented |
+| Financial ledger and accounting with reconciliation | Implemented |
+| Wallet vs AutoFund-owned inventory, kept separate | Implemented |
+| Microstructure and cross-market / cross-venue research | Implemented |
+| **Research Control Center** | Implemented |
+| **Demo mode** | Implemented |
+| Production safety boundaries (capability gates, single-use permits) | Implemented |
+| Experiment Engine / research automation | **Not implemented** — planned for 0.3.1 |
+| Strategy lifecycle automation | **Not implemented** |
+| Profitable, production-certified strategies | **None. Zero.** |
+
+AutoFund ships **no certified strategy**. The current validated information signal is predictive and
+economically unusable at retail friction, and the platform reports it that way.
+
+---
+
+## Safety warning
+
+AutoFund is **experimental software** and is not a financial product.
+
+- It does **not** guarantee profitability. No strategy in this repository is certified.
+- Passing the test suite does **not** mean it is safe to point at real capital. The tests verify
+  behaviour, not edge.
+- Real-money operation requires explicit production configuration and a per-session operator
+  authorization with a typed confirmation phrase.
+- The default mode is Demo. A new clone cannot reach an exchange.
+- The product envelope is fixed in code, not configuration: 50 MXN authorized capital, 25 MXN
+  maximum deployment, 11 MXN maximum single order, 0.50 MXN maximum drawdown. There is no
+  environment variable that widens these, deliberately — a mistyped variable should not be able to
+  raise a financial limit.
+- AutoFund has no withdrawal, transfer, cancel or replace capability, and requests no API
+  permission for them.
+
+See [SECURITY.md](SECURITY.md) for credential handling and vulnerability reporting.
+
+---
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Bounded responsibilities, financial flow, truth separation |
+| [docs/research-history.md](docs/research-history.md) | Every milestone, its question and its finding |
+| [docs/public-boundary.md](docs/public-boundary.md) | What is published and what stays private |
+| [docs/status.md](docs/status.md) | Current project state |
+| [docs/roadmap.md](docs/roadmap.md) | Planned direction |
+| [docs/releases/v0.3.0.md](docs/releases/v0.3.0.md) | Release notes and known limitations |
+| [docs/licensing-decision.md](docs/licensing-decision.md) | License options for the owner to choose |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup and the review expectations |
+| [SECURITY.md](SECURITY.md) | Reporting, credential handling, production boundaries |
+| [docs/OPERATIONS_RUNBOOK.md](docs/OPERATIONS_RUNBOOK.md) | Operating a real session |
+
+---
+
+## Screenshots
+
+Captured in Demo mode from generated synthetic data. Every figure in these images is invented by
+`autofund demo`, and each one carries the `DEMO MODE — SYNTHETIC DATA` banner. They are not anyone's
+account, and they are not a backtest.
+
+| View | Image |
+|---|---|
+| Control Center overview — four separate statuses | ![Control Center](docs/screenshots/control-center-overview.png) |
+| Alpha Registry — a source that predicts and is not economic | ![Alpha registry](docs/screenshots/alpha-registry.png) |
+| Strategy Registry — engineering `PASS` beside economic `FAIL` | ![Strategy registry](docs/screenshots/strategy-registry.png) |
+| Evidence Explorer — provenance and lineage per record | ![Evidence explorer](docs/screenshots/evidence-explorer.png) |
+| Campaigns — a healthy collector whose coverage is insufficient | ![Campaigns](docs/screenshots/campaigns.png) |
+| Production eligibility — a blocking reason for every pair | ![Production eligibility](docs/screenshots/production-eligibility.png) |
+
+To reproduce them: start `autofund demo` and run `node scripts/capture-docs.mjs` from `frontend/`.
+The script refuses to write an image whose page is not labelled synthetic.
+
+---
+
+## Project layout
+
+```text
+src/autofund/
+  demo/          Demo mode: mode resolution, credential isolation, synthetic dataset
+  research/      Research Control Center read model and read-only API
+  mvp/           Orchestrator, control plane, economics, risk, execution profile
+  live/          Production execution, durable journal, reconciliation
+  observer/      Read-only account and market observation
+  shadow/        Shadow trading against real public data
+  market/        Market data, sessions, candles
+  exchanges/     Exchange adapters
+frontend/        React control plane and Research Control Center
+tests/           Backend test suite
+scripts/         Certification, capture and audit tooling
+docs/            Architecture, research history and specifications
+schemas/         Public data contracts
 ```
 
-Este ejemplo pierde exactamente 0.40 MXN: 0.20 de fees y 0.20 de slippage.
-El resultado no se ha ajustado para producir una ganancia. El golden test congela
-este c?lculo manual y su fingerprint completo.
+---
 
-## Arquitectura y decisiones
+## Licensing
 
-CSV validado ? ReplayClock ? ejecuci?n de intenci?n pendiente en la apertura ?
-marcado de equity ? snapshot de candle cerrado ? Strategy ? OrderIntent.
-La siguiente apertura vuelve a comprobar capital/riesgo en F0 antes del fill.
+**No license has been selected.** This repository is therefore *source-available*, not open source:
+without a license, the default is that all rights are reserved, and others have no legal permission
+to use, modify or redistribute it.
 
-- La estrategia recibe ?nicamente valores inmutables y candles ya observados.
-  Nunca recibe Wallet, Ledger, el dataset completo ni un ejecutor.
-- Los timestamps son etiquetas UTC de candles, con fases OPEN y CLOSE ordenadas;
-  no se inventa una duraci?n intrabar. Una se?al de N ejecuta como pronto en N+1.
-- Al finalizar se cancelan intenciones y se marcan posiciones al ?ltimo close;
-  no se fuerza liquidaci?n. El resultado separa P&L realizado/no realizado.
-- Decimal obligatorio. Se conserva la pol?tica de precisi?n/residuales de F0.
-  CSV inv?lido se rechaza; no se repara ni ordena silenciosamente.
-- Hashes SHA-256 de JSON can?nico. Rutas, metadatos y tiempo real no intervienen.
-  run_id identifica los inputs; result_fingerprint identifica el resultado.
-- Trade cerrado significa episodio flat-to-flat; se cuenta aparte cada fill.
-  Cost-addback es una m?trica expl?cita, no un backtest ficticio sin costos.
-- El l?mite controla admisi?n de compras. Un movimiento de mercado puede elevar
-  despu?s la exposici?n; la m?trica m?xima lo muestra y no rebalancea en secreto.
+[`docs/licensing-decision.md`](docs/licensing-decision.md) compares MIT and Apache-2.0 for this
+project and sets out what each implies. The choice belongs to the project owner, and it is the one
+remaining decision before this repository can be described as open source.
 
-## Documentaci?n, l?mites y validaci?n
+---
 
-[F0_SPEC](docs/F0_SPEC.md) conserva los contratos financieros.
-[F1_SPEC](docs/F1_SPEC.md) congela schema, temporalidad, aislamiento, ciclo,
-serializaci?n, f?rmulas, l?mites y golden replay. Fixtures peque?os est?n en
-`tests/fixtures/`; pruebas F1 en `tests/replay/`.
+## Versioning
 
-F1 soporta un mercado BASE/MXN por run, un escritor, fills paper completos e
-inmediatos en la siguiente apertura y datos en memoria. No simula ticks, spreads,
-liquidez, latencia, ejecuci?n intrabar ni exchange constraints. Drawdown utiliza
-aperturas posteriores a ejecuci?n y cierres, no una trayectoria inventada entre
-high/low. La API a?sla estrategias normales, no es un sandbox de Python hostil.
+Software version and research milestone are tracked separately. The first public release is
+`v0.3.0`, not `1.0`: it is a usable research platform, and it has no certified strategy. Version
+numbers do not imply profitability, and no version will be called `1.0` because of a research
+result.
 
-Las pruebas comprueban igualdad exacta entre runs, procesos, contextos Decimal,
-rutas y timezones. No utilizan tolerancias para demostrar reproducibilidad.
-El baseline financiero sigue cubierto por sus 76 pruebas originales.
-
-Herramientas opcionales de revisi?n (no runtime):
-
-```powershell
-.venv\Scripts\python -m pip install ruff mypy
-.venv\Scripts\python -m ruff check src tests examples
-.venv\Scripts\python -m ruff format --check src tests examples
-.venv\Scripts\python -m mypy --strict --follow-imports=silent src/autofund/replay src/autofund/market
-```
+| Version | Milestone |
+|---|---|
+| `v0.3.0` | Research Control Center, public release |
+| `v0.3.1` | Experiment Engine *(planned)* |
+| `v0.3.2` | Research automation *(planned)* |

@@ -1,0 +1,35 @@
+{
+  "schema_version": "autofund.demo-dataset.v1",
+  "provenance": "SYNTHETIC_DEMO",
+  "synthetic": true,
+  "demo_notice": "Illustrative example of an alpha-source record. Not evidence and not a measurement of any market.",
+  "alpha_source_id": "DEMO_CROSS_MARKET_SIGNAL_V1",
+  "name": "Demo cross-market relationship signal",
+  "family": "CROSS_MARKET",
+  "version": "1",
+  "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "classification": "PREDICTIVE_NOT_ECONOMIC",
+  "prediction_status": "PREDICTIVE",
+  "economic_status": "NOT_ECONOMIC",
+  "tradeable": false,
+  "movement_bps": "3.140000000000000000000000000",
+  "required_friction_bps": "172.0000000000000000000000000",
+  "headroom_bps": "-168.8600000000000000000000000",
+  "markets": [
+    "BTC/MXN",
+    "ETH/MXN"
+  ],
+  "prediction_horizon": "5 minutes",
+  "development_status": "COMPLETED",
+  "validation_status": "PASSED",
+  "reason_codes": [
+    "PREDICTIVE_BUT_MOVEMENT_BELOW_ROUND_TRIP_FRICTION",
+    "SYNTHETIC_DEMO_FIXTURE"
+  ],
+  "hypothesis": "A lagging relationship between two MXN pairs predicts short-horizon direction",
+  "_reading_notes": {
+    "the_whole_point": "Two separate findings are recorded side by side. The source predicts direction, and the movement it predicts is smaller than the cost of acting on it. Either fact alone would be misleading: predictive alone reads as opportunity, and uneconomic alone reads as having found nothing.",
+    "why_headroom_is_the_informative_field": "Headroom is movement minus friction. Negative headroom is the direct statement that no execution model at this cost structure can monetise the signal, and it is what makes a venue search unnecessary rather than uninteresting.",
+    "why_tradeable_is_three_valued": "true, false, or null for not-yet-known. A boolean would force an unknown to be reported as a definite no. See the schemas for the exact shape."
+  }
+}

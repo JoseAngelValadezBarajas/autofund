@@ -86,15 +86,66 @@ from autofund.version import PRODUCT_VERSION, VERSION
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 
+# A handful of tests below verify the read model against *this installation's own research corpus*:
+# eleven milestones of certifications and captures. That corpus is private runtime state and is
+# gitignored, so in a fresh clone it does not exist.
+#
+# Those tests skip, and everything else in this module runs regardless. The distinction is
+# deliberate and narrow: a test that asserts what an alpha record *contains* needs the real corpus,
+# while a test that asserts a safety invariant - path traversal, authorization failing closed,
+# wallet-not-inventory, the read model not indexing itself - does not, and must run in public CI
+# because those are exactly the properties a public reader is being asked to trust.
+#
+# The guard looks for a **certification artifact**, not for a directory. A directory named
+# `artifacts/mvp` proves nothing: the demo smoke probe creates one, and the first version of this
+# guard therefore reported a corpus present in a fresh clone and let seven content assertions run
+# against synthetic data and fail. Evidence is a file.
+_CERTIFICATIONS = (
+    ARTIFACTS_ROOT / "mvp-certification" / "mvp-0-1-1-certification.json",
+    ARTIFACTS_ROOT / "mvp" / "alpha" / "mvp-0-2-6-certification.json",
+    ARTIFACTS_ROOT / "mvp" / "cross-venue" / "mvp-0-2-8-certification.json",
+)
+_HAS_CORPUS = any(path.is_file() for path in _CERTIFICATIONS)
+
+requires_corpus = pytest.mark.skipif(
+    not _HAS_CORPUS,
+    reason=("requires this installation's private research corpus at artifacts/, which is "
+            "gitignored runtime state. Regenerate it with the certification scripts, or run "
+            "tests/demo/test_demo_safety.py for the public-safe equivalent."))
+
 
 # ---- fixtures -----------------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
 def registry() -> ResearchRegistry:
-    """The real registry, built from the real artifacts once for the module."""
-    return ResearchRegistryBuilder(
-        artifacts_root=ARTIFACTS_ROOT, repository_root=REPO_ROOT).build()
+    """A registry, built once for the module.
+
+    Built over this installation's private corpus when it is present, and over the generated
+    synthetic dataset when it is not. The fallback matters: every safety-invariant test in this
+    module - path traversal, authorization failing closed, wallet-not-inventory, the read model not
+    indexing itself - takes this fixture, and those are precisely the properties a public reader is
+    being asked to trust. Letting them skip on a fresh clone would leave the most important
+    assertions in the suite unrun on every new machine.
+
+    So the read model is always available and always exercised. Only the tests that assert the
+    *content* of real evidence are marked `@requires_corpus`, because those genuinely cannot pass
+    without it.
+    """
+    if _HAS_CORPUS:
+        return ResearchRegistryBuilder(
+            artifacts_root=ARTIFACTS_ROOT, repository_root=REPO_ROOT).build()
+    # Synthetic fallback: the demo dataset, generated into a temporary directory. The registry code
+    # path exercised is identical, so a fallback run is still a real test of the read model.
+    import tempfile
+
+    from autofund.demo import generate
+
+    root = Path(tempfile.mkdtemp(prefix="autofund-research-fallback-")) / "artifacts" / "demo"
+    generate(artifacts_root=root)
+    from autofund.research.api import service_for_root
+
+    return service_for_root(root).registry
 
 
 @pytest.fixture()
@@ -125,12 +176,14 @@ def test_alpha_source_needs_an_identity() -> None:
         AlphaSourceRecord(alpha_id="", name="x", family=AlphaFamily.CROSS_MARKET)
 
 
+@requires_corpus
 def test_alpha_records_are_registered(registry: ResearchRegistry) -> None:
     assert len(registry.alpha_sources) >= 4
     families = {record.family for record in registry.alpha_sources}
     assert "CROSS_MARKET" in families
 
 
+@requires_corpus
 def test_the_validated_signal_is_predictive_but_not_economic(
         registry: ResearchRegistry) -> None:
     """The one signal this project validated predicts, and cannot pay for itself. Both facts have
@@ -145,6 +198,7 @@ def test_the_validated_signal_is_predictive_but_not_economic(
     assert Decimal(record.economic_headroom_bps) < 0
 
 
+@requires_corpus
 def test_alpha_fingerprint_matches_the_frozen_value(registry: ResearchRegistry) -> None:
     record = registry.alpha("VALIDATED_INFORMATION_SIGNAL_V1")
     assert record is not None
@@ -181,11 +235,23 @@ def test_frozen_strategies_report_a_frozen_state(registry: ResearchRegistry) -> 
 
 
 def test_experiment_records_cover_every_milestone(registry: ResearchRegistry) -> None:
-    """Eleven milestones produced evidence; the registry must account for all of them."""
-    assert len(registry.experiments) == 11
+    """Every milestone that produced evidence is registered, with no gap and no invented entry.
+
+    Asserted as a subset rather than an exact count. The real corpus has exactly these eleven, but
+    the demo dataset legitimately declares a twelfth of its own, so an equality assertion would make
+    this module's outcome depend on which corpus it happened to be pointed at. The property worth
+    testing is that the eleven are all present and that nothing beyond them claims to be a real
+    milestone.
+    """
     expected = {"mvp-0-1-1", "mvp-0-1-3", "mvp-0-2", "mvp-0-2-1", "mvp-0-2-2", "mvp-0-2-3",
                 "mvp-0-2-4", "mvp-0-2-5", "mvp-0-2-6", "mvp-0-2-7", "mvp-0-2-8"}
-    assert {record.experiment_id for record in registry.experiments} == expected
+    recorded = {record.experiment_id for record in registry.experiments}
+    assert expected <= recorded, f"milestones missing from the registry: {expected - recorded}"
+    # Additions are permitted only from a declared seed, which the demo supplies. A milestone id
+    # that is neither a real one nor a labelled demo one would be an invented record.
+    extra = recorded - expected
+    assert all(identifier.startswith("demo-") for identifier in extra), (
+        f"unrecognised experiment ids in the registry: {sorted(extra)}")
 
 
 def test_experiment_lookup_of_an_unknown_id_is_none(registry: ResearchRegistry) -> None:
@@ -234,12 +300,14 @@ def test_classification_is_never_derived_from_a_neighbouring_field(
 # ---- §48 evidence provenance --------------------------------------------------------------------
 
 
+@requires_corpus
 def test_evidence_records_carry_provenance(registry: ResearchRegistry) -> None:
     assert len(registry.evidence) >= 18
     for record in registry.evidence:
         assert record.provenance in set(EvidenceProvenance)
 
 
+@requires_corpus
 def test_synthetic_evidence_is_not_real_observation(registry: ResearchRegistry) -> None:
     """§33 and §42: a fixture is not a measurement. The distinction has to be computable, not a
     matter of the reader remembering which artifact came from where."""
@@ -250,6 +318,7 @@ def test_synthetic_evidence_is_not_real_observation(registry: ResearchRegistry) 
             assert record.is_real_observation is True
 
 
+@requires_corpus
 def test_evidence_can_be_queried_by_alpha(registry: ResearchRegistry) -> None:
     rows = registry.evidence_for(alpha_id="CROSS_VENUE_DISLOCATION")
     assert rows
@@ -257,6 +326,7 @@ def test_evidence_can_be_queried_by_alpha(registry: ResearchRegistry) -> None:
         assert "CROSS_VENUE_DISLOCATION" in row.alpha_sources
 
 
+@requires_corpus
 def test_captured_evidence_is_marked_as_real_observation(
         registry: ResearchRegistry) -> None:
     """The cross-venue capture really ran against live public endpoints. That has to be
@@ -269,6 +339,7 @@ def test_captured_evidence_is_marked_as_real_observation(
     assert all(row.is_real_observation is True for row in captured)
 
 
+@requires_corpus
 def test_superseded_evidence_is_marked_superseded(registry: ResearchRegistry) -> None:
     """A replaced certification is still indexed, and says that it has been replaced, so the
     timeline does not read as two contradictory conclusions for the same milestone."""

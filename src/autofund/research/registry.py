@@ -60,7 +60,15 @@ BUILDER_VERSION = "autofund.research-builder.v1"
 # ---------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
-class _Seed:
+class ExperimentSeed:
+    """One experiment the registry knows about: its identity, its question and its artifact.
+
+    Public rather than private because a caller may legitimately need to declare an experiment the
+    code does not know about - the public demo dataset declares its own. That is an extension
+    point, not a demo-specific branch: production never passes any, so production behaviour is
+    unchanged and the demo does not need the registry to contain special-case logic about demos.
+    """
+
     experiment_id: str
     milestone: str
     title: str
@@ -69,6 +77,10 @@ class _Seed:
     markets: tuple[str, ...] = ()
     strategies: tuple[str, ...] = ()
     alpha: tuple[str, ...] = ()
+
+
+# Retained for internal readability; the public name is ExperimentSeed.
+_Seed = ExperimentSeed
 
 
 _SEEDS: tuple[_Seed, ...] = (
@@ -188,10 +200,13 @@ class ResearchRegistryBuilder:
     """Assembles the read model from the artifact roots it is given."""
 
     def __init__(self, *, artifacts_root: Path, repository_root: Path,
-                 indexer: ArtifactIndexer | None = None) -> None:
+                 indexer: ArtifactIndexer | None = None,
+                 extra_seeds: tuple[ExperimentSeed, ...] = ()) -> None:
         self.artifacts_root = artifacts_root.resolve(strict=False)
         self.repository_root = repository_root.resolve(strict=False)
         self.indexer = indexer or ArtifactIndexer(roots=(self.artifacts_root,))
+        # Declared by the caller, never inferred. Empty in every production build.
+        self.extra_seeds = tuple(extra_seeds)
 
     # -- entry point ---------------------------------------------------------------------------
 
@@ -222,7 +237,7 @@ class ResearchRegistryBuilder:
     def _experiments(self, *, by_path: dict[str, ArtifactRecord]
                      ) -> tuple[ExperimentRecord, ...]:
         out: list[ExperimentRecord] = []
-        for seed in _SEEDS:
+        for seed in (*_SEEDS, *self.extra_seeds):
             payload = _read(self.artifacts_root / seed.artifact)
             if payload is None:
                 # The artifact is absent, so the experiment is still listed — it happened — but its
@@ -496,7 +511,12 @@ class ResearchRegistryBuilder:
                 count, first, last = _stream_bounds(path)
                 out.append(EvidenceRecord(
                     evidence_id=f"{campaign_root}:{path.stem}",
-                    provenance=provenance,
+                    # The provenance is read from the records, not assumed from the directory. A
+                    # demo capture written into the same path a real capture uses would otherwise be
+                    # reported as a real observation, which is the one labelling error that could
+                    # turn synthetic data into a claim about a market. The directory says where the
+                    # data is; the data says what it is.
+                    provenance=_capture_provenance(path, default=provenance),
                     experiment_id=("mvp-0-2-8" if provenance
                                    == EvidenceProvenance.REAL_CAPTURED_CROSS_VENUE
                                    else "mvp-0-2-4"),
@@ -569,6 +589,47 @@ class ResearchRegistryBuilder:
             coverage_sufficient=False,
             artifact_paths=tuple(f"{_MICROSTRUCTURE_CAPTURE}/{path.name}"
                                  for path in micro_files)))
+
+        # A declared extra seed may bring its own capture with it. The demo dataset does, and
+        # without this its collector would be invisible on the Campaigns page even though the
+        # records it produced are indexed. The provenance is read from the capture documents rather
+        # than assumed, so a demo campaign is not reported as a real capture.
+        for seed in self.extra_seeds:
+            seed_capture = (self.artifacts_root / seed.artifact).parent / "capture"
+            files = sorted(seed_capture.glob("*.jsonl"))
+            if not files:
+                continue
+            provenance = EvidenceProvenance.UNKNOWN
+            for path in files:
+                for line in path.read_text(encoding="utf-8").splitlines()[:1]:
+                    try:
+                        marker = json.loads(line).get("provenance")
+                    except (json.JSONDecodeError, AttributeError):
+                        marker = None
+                    if isinstance(marker, str):
+                        provenance = _provenance_from(marker)
+                    break
+                if provenance is not EvidenceProvenance.UNKNOWN:
+                    break
+            seed_cert = _read(self.artifacts_root / seed.artifact) or {}
+            coverage = (seed_cert.get("capture") or {}).get("coverage") or {}
+            out.append(ResearchCampaignRecord(
+                campaign_id=f"{seed.experiment_id.upper()}_CAPTURE",
+                title=f"{seed.title} capture",
+                experiment_id=seed.experiment_id,
+                status=CampaignStatus.STOPPED,
+                # Health is a property of the collector; the conclusion is a property of the data.
+                process_health="HEALTHY" if files else UNKNOWN,
+                evidence_conclusion=_text(seed_cert, "status"),
+                planned_duration_hours=_decimal(coverage, "required_hours"),
+                actual_coverage_hours=_decimal(coverage, "covered_hours"),
+                markets=seed.markets,
+                observations=sum(_stream_bounds(path)[0] for path in files),
+                storage_bytes=sum(path.stat().st_size for path in files) or None,
+                evidence_provenance=provenance,
+                coverage_sufficient=coverage.get("sufficient"),
+                artifact_paths=tuple(f"{seed_capture.relative_to(self.artifacts_root)}/{p.name}"
+                                     for p in files)))
         return tuple(out)
 
     # -- certifications ------------------------------------------------------------------------
@@ -649,6 +710,49 @@ class ResearchRegistryBuilder:
                     authorization_status="PRODUCTION_DISABLED", position_status="NONE",
                     blocking_reason="PREDICTIVE_NOT_ECONOMIC", eligible=False))
         return tuple(out)
+
+
+def _capture_provenance(path: Path, *, default: EvidenceProvenance) -> EvidenceProvenance:
+    """Read a capture's provenance from its own first record.
+
+    The directory a capture sits in is not evidence of what it contains: demo mode writes to the
+    same relative paths a real capture uses, so that the demo exercises the production read path. A
+    reader that trusted the directory would then label synthetic records as real observed market
+    data - the single labelling error that could turn a generated fixture into a claim about a
+    market. So the records are asked, and a record that does not declare itself is treated as
+    unknown rather than assumed real.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    marker = json.loads(line).get("provenance")
+                except (json.JSONDecodeError, AttributeError):
+                    return EvidenceProvenance.UNKNOWN
+                return _provenance_from(marker) if isinstance(marker, str) else default
+    except (OSError, UnicodeDecodeError):
+        return EvidenceProvenance.UNKNOWN
+    return default
+
+
+def _provenance_from(marker: str) -> EvidenceProvenance:
+    """Map a provenance string read from a document onto the enum, defaulting to UNKNOWN.
+
+    Defaulting rather than raising is deliberate: an unrecognised marker means a document this
+    build does not understand, and reporting UNKNOWN is honest, whereas guessing would let a
+    synthetic fixture claim to be a real measurement. `SYNTHETIC_DEMO` is an alias for the existing
+    `SYNTHETIC_FIXTURE` rather than a new category, because they describe the same thing: data that
+    was generated rather than observed.
+    """
+    if marker == "SYNTHETIC_DEMO":
+        return EvidenceProvenance.SYNTHETIC_FIXTURE
+    try:
+        return EvidenceProvenance(marker)
+    except ValueError:
+        return EvidenceProvenance.UNKNOWN
 
 
 def _load_profile_library() -> dict[str, Any]:

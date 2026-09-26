@@ -46,7 +46,8 @@ class ActionRequest(BaseModel):
 
 
 def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
-                   *, host: str = "127.0.0.1", port: int = 8000) -> FastAPI:
+                   *, host: str = "127.0.0.1", port: int = 8000,
+                   artifacts_root: Path | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
@@ -176,9 +177,21 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
     # The research Control Center's read-only surface. Registered before the static mount at "/"
     # so its routes are matched first, and kept in its own module so the research read model never
     # gains a dependency on the trading state machine.
-    from autofund.research.api import _default_service, build_research_router
+    #
+    # The registry is built over the artifacts root this process was given rather than a fixed
+    # path. In demo mode that root holds the synthetic dataset, and in a real run it holds the
+    # operator's own artifacts, so the dashboard always describes the directory the application
+    # actually wrote to.
+    from autofund.research.api import (
+        _default_service,
+        build_research_router,
+        service_for_root,
+    )
 
-    app.include_router(build_research_router(_default_service()))
+    service = (service_for_root(artifacts_root, orchestrator) if artifacts_root is not None
+               else _default_service())
+    app.include_router(build_research_router(service))
+    app.state.research_service = service
 
     if dist and dist.exists():
         app.mount("/", StaticFiles(directory=dist, html=True), name="mvp")

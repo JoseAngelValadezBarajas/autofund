@@ -2,16 +2,101 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+venv/
 *.egg-info/
 build/
 dist/
 .ruff_cache/
 .mypy_cache/
-artifacts/
-.env
-*.secret
-keys.json
+.coverage
+coverage.xml
+htmlcov/
+.bandit/
 
+# ------------------------------------------------------------------------------------------------
+# Private runtime state.
+#
+# `artifacts/` is where a real run writes its journal, ledger, captures, certifications and
+# telemetry. It is private for two reasons: it contains account-specific financial records, and it
+# is large. Demo mode writes to `artifacts/demo`, which this pattern also covers: a demo run is a
+# runtime artifact like any other, regenerated on demand by the demo command and pinned by tests
+# rather than by a committed file.
+# ------------------------------------------------------------------------------------------------
+artifacts/
+
+# ------------------------------------------------------------------------------------------------
+# Credentials.
+#
+# `.env.example` is deliberately NOT ignored: it documents the variable names with placeholder
+# values, so a reader can see the contract without ever handling a real secret.
+# ------------------------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+*credential*
+*Credential*
+keys.json
+keys.*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.clixml
+id_rsa*
+id_ed25519*
+
+# Windows DPAPI-protected credential stores produced by Export-Clixml.
+*.cred.xml
+*.credxml
+
+# ------------------------------------------------------------------------------------------------
+# Financial state, wherever it appears. These names are listed explicitly rather than relying on
+# `artifacts/` covering them, so a journal written elsewhere is still not committed.
+# ------------------------------------------------------------------------------------------------
+*journal*.jsonl
+*ledger*.jsonl
+*execution.jsonl
+recovery-journal-copy.jsonl
+*.journal.jsonl.lock
+
+# ------------------------------------------------------------------------------------------------
+# Large data: captures and datasets.
+# ------------------------------------------------------------------------------------------------
+*.parquet
+*.duckdb
+*.sqlite
+*.sqlite3
+datasets/
+captures/
+microstructure/
+cross-venue/
+
+# ------------------------------------------------------------------------------------------------
+# Local machine configuration and editor/OS state.
+# ------------------------------------------------------------------------------------------------
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+
+# ------------------------------------------------------------------------------------------------
+# Frontend. `dist/` is built from source by `npm run build` and is not tracked: the backend serves
+# it when present and reports 503 when it is absent, so a clone is never broken by its absence.
+# ------------------------------------------------------------------------------------------------
 frontend/node_modules/
+frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
+frontend/blob-report/
+frontend/.vite/
+
+# Temporary scratch files used during development. Prefixed `_` by convention so they are caught
+# here rather than being committed by accident.
+scripts/_*.py
+scripts/*.tmp.json
+*.tmp

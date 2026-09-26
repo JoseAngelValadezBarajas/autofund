@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofund.local/schemas/alpha_source.schema.json",
+  "title": "AlphaSourceRecord",
+  "description": "Public contract for alpha source, generated from the domain model `autofund.research.models.AlphaSourceRecord` by scripts/export_schemas.py. Regenerate rather than editing: the model is the source of truth.",
+  "x-autofund-contract": "autofund.research.alpha-source.v1",
+  "type": "object",
+  "properties": {
+    "alpha_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "family": {
+      "type": "string",
+      "description": "one of the AlphaFamily values"
+    },
+    "version": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "classification": {
+      "type": "string",
+      "description": "one of the AlphaClassification values",
+      "default": "HYPOTHESIS"
+    },
+    "prediction_status": {
+      "type": "string",
+      "description": "one of the PredictionStatus values",
+      "default": "NOT_TESTED"
+    },
+    "economic_status": {
+      "type": "string",
+      "description": "one of the EconomicStatus values",
+      "default": "NOT_EVALUATED"
+    },
+    "markets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "prediction_horizon": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "development_status": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "validation_status": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "movement_bps": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "required_friction_bps": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_provenance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source_experiment": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "frozen_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "is_a_strategy": {
+      "type": "boolean",
+      "default": false
+    },
+    "hypothesis": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "definition": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    }
+  },
+  "required": [
+    "alpha_id",
+    "family",
+    "name"
+  ],
+  "additionalProperties": false
+}

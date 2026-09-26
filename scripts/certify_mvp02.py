@@ -201,10 +201,14 @@ def main() -> int:
             bid_quantity_mxn=Decimal(observed.get("depth_mxn", "0")),
             data_age_seconds=Decimal(observed.get("age_seconds", "999"))))
 
+    # A synthetic deployed/cash split consistent with the portfolio envelope below. The original
+    # milestone read these from a real account, and a single-account cash balance is personal
+    # financial state rather than a certification input: the selector only needs *a* deployed
+    # figure that respects the caps, not this operator's.
     portfolio = PortfolioConstraints(
         authorized_capital_mxn=Decimal("50"), max_deployment_mxn=Decimal("25"),
-        single_order_cap_mxn=Decimal("11"), deployed_mxn=Decimal("10.91486406"),
-        cash_mxn=Decimal("39.06210253"))
+        single_order_cap_mxn=Decimal("11"), deployed_mxn=Decimal("12.00"),
+        cash_mxn=Decimal("38.00"))
     selection = select_production_opportunity(
         candidates=tuple(candidates),
         context=MarketSelectionContext(constraints=portfolio, unresolved_orders=0,

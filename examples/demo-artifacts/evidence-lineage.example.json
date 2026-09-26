@@ -1,0 +1,29 @@
+{
+  "schema_version": "autofund.demo-dataset.v1",
+  "provenance": "SYNTHETIC_DEMO",
+  "synthetic": true,
+  "demo_notice": "Illustrative example of an evidence record. Not evidence and not a measurement of any market.",
+  "evidence_id": "demo-0-1:certification",
+  "experiment_id": "demo-0-1",
+  "alpha_sources": [
+    "DEMO_CROSS_MARKET_SIGNAL_V1"
+  ],
+  "strategies": [],
+  "provenance_class": "SYNTHETIC_FIXTURE",
+  "is_real_observation": false,
+  "dataset_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+  "quality": "OK",
+  "markets": [
+    "BTC/MXN",
+    "ETH/MXN"
+  ],
+  "observation_count": 8640,
+  "start": null,
+  "end": null,
+  "artifact_path": "mvp/cross-venue/mvp-demo-0-1-certification.json",
+  "_reading_notes": {
+    "why_provenance_is_the_headline_field": "A synthetic fixture and a real capture can carry identical numbers. Only provenance distinguishes them, and only one of the two can support a conclusion about a market. The Control Center renders this per row rather than as a page-level note, because a page can contain both.",
+    "why_is_real_observation_is_computed": "It is derived from the provenance class rather than being an independent field, so it cannot disagree with it.",
+    "lineage": "alpha source -> experiment -> artifact. The chain is what makes a conclusion traceable back to the thing that produced it, and it is what the Evidence Explorer renders."
+  }
+}

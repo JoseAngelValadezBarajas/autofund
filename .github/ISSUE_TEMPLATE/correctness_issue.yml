@@ -1,0 +1,87 @@
+name: Research or correctness issue
+description: A financial decision, measurement or research conclusion looks wrong
+labels: ["correctness", "research"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when the system produced a **wrong answer** rather than a crash: an entry
+        it should have refused, a refusal it should have allowed, a measurement that looks
+        impossible, or a research conclusion that does not follow from its evidence.
+
+        These reports are the most valuable kind this project receives, because a plausible wrong
+        number is worse than a missing one and only a human reading the details tends to catch it.
+
+        **Never include credentials or real account data** — balances, position sizes, cost bases or
+        order identifiers. Describe them instead: "a position of about 9 MXN cost basis" rather than
+        the exact figure recovered from your account.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      options:
+        - Economic admission (EconomicEdgeGuard, fees, friction)
+        - Risk (RiskEngine, drawdown, sizing, reward/risk)
+        - Execution or reconciliation (orders, fills, recovery)
+        - Accounting (ledger, positions, balances)
+        - Research measurement (replay, statistics, alpha discovery)
+        - Certification (a verdict or threshold)
+        - Research Control Center (a displayed status or registry record)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: fingerprint
+    attributes:
+      label: Experiment, strategy or alpha fingerprint
+      description: |
+        The `fingerprint` field from the relevant registry record, or the artifact filename. Without
+        one the report cannot be tied to a specific run, because a profile's behaviour is identified
+        by its fingerprint rather than its name.
+      placeholder: "1cadcfa967a919b6...  or  mvp-0-2-8-certification.json"
+    validations:
+      required: false
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Data provenance
+      description: |
+        What was the evidence? Real historical development, real holdout, forward capture, or a
+        synthetic fixture? A conclusion drawn from a fixture is not a conclusion about a market, and
+        the provenance determines what the result can support.
+      placeholder: "REAL_HISTORICAL_HOLDOUT, 720 hours, BTC/MXN and ETH/MXN"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect the correct result to be, and why?
+      description: If the expectation comes from arithmetic, show the arithmetic.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What did the system produce?
+      description: Include the exact fields and values, and where you read them from.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can it be reproduced?
+      description: |
+        The command, the inputs, and any artifact needed. If it only reproduces against private data,
+        say which properties are needed so a synthetic reproduction can be built.
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have not included credentials or real account data in this report
+          required: true
+        - label: I understand that a negative research result is a valid outcome, and am reporting a result I believe is incorrect rather than one I dislike
+          required: false

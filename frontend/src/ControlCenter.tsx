@@ -154,6 +154,28 @@ export function useResearch<T>(path:string,query=''){
   return {data,error,loading};
 }
 
+/**
+ * The provenance banner.
+ *
+ * This is not decoration. A screenshot of a dashboard showing a balance and a P&L is very easy to
+ * read as a real account's performance, and the numbers in demo mode are invented. So the label is
+ * driven by what the backend says the artifacts actually are - not by which command was run - and
+ * it says plainly that the figures are synthetic and that Production is not reachable.
+ */
+function ProvenanceBanner({provenance}:{provenance:string}){
+  const synthetic=provenance!=='REAL';
+  return <div className={synthetic?'cc-banner cc-banner-synthetic':'cc-banner'}
+    data-provenance={provenance} role="status">
+    {synthetic
+      ?<><strong>DEMO MODE — SYNTHETIC DATA</strong>
+        <span>Every figure below is generated for demonstration. This is not a backtest, not
+          historical performance, and not any real account. PRODUCTION IS DISABLED and no exchange
+          credential is present.</span></>
+      :<><strong>REAL DATA</strong>
+        <span>These figures are read from this installation&apos;s own artifacts.</span></>}
+  </div>;
+}
+
 /** Shared read-only frame: loading, failure and absence are all explicit states. */
 function Frame({title,error,loading,children,note}:
   {title:string;error:string;loading:boolean;children:React.ReactNode;note?:string}){
@@ -302,8 +324,10 @@ export function ProductionPanel({production}:{production:ProductionBlock}){
 
 export function ControlCenterPage(){
   const{data,error,loading}=useResearch<ResearchOverview>('/overview');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Research control center" loading={loading} error={error}
     note={data?.status.note}>
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<>
       <div className="cc-truths">
         <Truth dimension="engineering" value={data.status.engineering}
@@ -338,9 +362,11 @@ export function ControlCenterPage(){
 /** Alpha Registry: information sources, with prediction and economics reported separately. */
 export function AlphaRegistryPage(){
   const{data,error,loading}=useResearch<Paged<AlphaRecord>>('/alpha');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Alpha registry" loading={loading} error={error}
     note="An alpha source is information. It is not a strategy, and a source that predicts is not
       automatically a source you can trade.">
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<>
       <p className="cc-note">{data.total} registered source{data.total===1?'':'s'}.</p>
       <div className="table"><table><thead><tr><th>Alpha</th><th>Family</th><th>Classification</th>
@@ -380,9 +406,11 @@ export function AlphaRegistryPage(){
 /** Strategy Registry: the four verdicts on one row, deliberately not merged. */
 export function StrategyRegistryPage(){
   const{data,error,loading}=useResearch<Paged<StrategyRecord>>('/strategies');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Strategy registry" loading={loading} error={error}
     note="Engineering, economic, risk and production verdicts are four separate columns. A strategy
       can pass engineering and fail economics, and here several do.">
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<>
       <p className="cc-note">{data.total} registered strateg{data.total===1?'y':'ies'}.</p>
       <div className="table"><table><thead><tr><th>Profile</th><th>Strategy</th><th>Status</th>
@@ -443,9 +471,11 @@ export function StrategyRegistryPage(){
 
 export function ExperimentRegistryPage(){
   const{data,error,loading}=useResearch<Paged<ExperimentRecord>>('/experiments');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Experiment registry" loading={loading} error={error}
     note="Every milestone that produced evidence is registered with its hypothesis and its
       outcome. A negative result is a result.">
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<>
       <p className="cc-note">{data.total} registered experiment{data.total===1?'':'s'}.</p>
       <div className="table"><table><thead><tr><th>Milestone</th><th>Title</th><th>Status</th>
@@ -483,9 +513,11 @@ export function ExperimentRegistryPage(){
 
 export function EvidenceExplorerPage(){
   const{data,error,loading}=useResearch<Paged<EvidenceRecord>>('/evidence');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Evidence explorer" loading={loading} error={error}
     note="Provenance is the point of this page. A fixture is not a measurement, and only real
       observation can support a conclusion.">
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<>
       <p className="cc-note">{data.total} evidence record{data.total===1?'':'s'}.</p>
       <div className="table"><table><thead><tr><th>Evidence</th><th>Provenance</th><th>Experiment</th>
@@ -519,9 +551,11 @@ export function EvidenceExplorerPage(){
 /** Campaigns: process health and evidence conclusion are two different questions. */
 export function CampaignsPage(){
   const{data,error,loading}=useResearch<Paged<CampaignRecord>>('/campaigns');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Campaigns" loading={loading} error={error}
     note="A collector can be perfectly healthy and still have produced no usable evidence. Health
       and conclusion are reported separately and never averaged.">
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<>
       <p className="cc-note">{data.total} campaign{data.total===1?'':'s'}.</p>
       {data.items.map(c=><article key={c.campaign_id} data-campaign={c.campaign_id}
@@ -542,10 +576,12 @@ export function CampaignsPage(){
           <dt>Coverage</dt><dd>{v(c.coverage_percent)}%</dd>
           <dt>Coverage sufficient</dt>
           <dd className={c.coverage_sufficient?'positive':'negative'}>
-            {c.coverage_sufficient?'YES':'NO — a rare event could not have been observed'}</dd>
+            {c.coverage_sufficient==null?'UNKNOWN — not evaluated'
+              :c.coverage_sufficient?'YES':'NO — a rare event could not have been observed'}</dd>
           <dt>Observations</dt><dd>{c.observations}</dd><dt>Gaps</dt><dd>{c.gaps}</dd>
           <dt>Latest sample</dt><dd>{v(c.latest_sample_at)}</dd>
-          <dt>Storage</dt><dd>{c.storage_bytes.toLocaleString()} bytes</dd>
+          <dt>Storage</dt><dd>{c.storage_bytes==null?'UNKNOWN'
+            :`${c.storage_bytes.toLocaleString()} bytes`}</dd>
           <dt>Artifacts</dt><dd className="cc-fp">{c.artifact_paths.join(', ')}</dd></dl>
       </article>)}
     </>}
@@ -555,10 +591,12 @@ export function CampaignsPage(){
 /** Activity timeline. Financial events live in their own journal and are not duplicated here. */
 export function TimelinePage(){
   const{data,error,loading}=useResearch<Paged<TimelineEvent>>('/timeline','?limit=200');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Research activity" loading={loading} error={error}
     note="Research and production events only. Financial events keep their
       authoritative source in the production journal and are never copied here, because two
       records of the same fill would eventually disagree.">
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<div className="table" data-financial-events-included="false">
       <table><thead><tr><th>When</th><th>Kind</th><th>Subject</th>
       <th>Detail</th><th>Source</th></tr></thead><tbody>
@@ -571,9 +609,11 @@ export function TimelinePage(){
 /** Production eligibility matrix: why each market and profile pair is or is not tradable. */
 export function EligibilityPage(){
   const{data,error,loading}=useResearch<Paged<EligibilityRecord>>('/eligibility','?limit=500');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Production eligibility" loading={loading} error={error}
     note="Every pair carries a deterministic blocking reason. A pair that cannot be traded always
       says why, so 'not selected' is never ambiguous.">
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<div className="table"><table><thead><tr><th>Market</th><th>Profile</th>
       <th>Alpha source</th><th>Research</th><th>Data quality</th><th>Compatibility</th>
       <th>Economic</th><th>Risk</th><th>Certification</th><th>Authorization</th>
@@ -594,10 +634,12 @@ export function EligibilityPage(){
 /** Artifact index: what evidence physically exists on disk. */
 export function ArtifactIndexPage(){
   const{data,error,loading}=useResearch<Paged<ArtifactRecord>>('/artifacts','?limit=200');
+  const{data:meta}=useResearch<{data_provenance?:string}>('/schema');
   return <Frame title="Artifact index" loading={loading} error={error}
     note="Every certification, capture and telemetry stream the registry can see, with a
       fingerprint so a change is detectable. Derived output is excluded: a read model that indexed
       its own snapshot would change on every rebuild.">
+    <ProvenanceBanner provenance={meta?.data_provenance??'UNKNOWN'}/>
     {data&&<>
       <p className="cc-note">{data.total} indexed artifact{data.total===1?'':'s'}
         {data.total>data.returned?` · showing first ${data.returned}`:''}.</p>

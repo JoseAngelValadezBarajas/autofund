@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofund.local/schemas/campaign.schema.json",
+  "title": "ResearchCampaignRecord",
+  "description": "Public contract for campaign, generated from the domain model `autofund.research.models.ResearchCampaignRecord` by scripts/export_schemas.py. Regenerate rather than editing: the model is the source of truth.",
+  "x-autofund-contract": "autofund.research.campaign.v1",
+  "type": "object",
+  "properties": {
+    "campaign_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "experiment_id": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "experiment_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "description": "one of the CampaignStatus values",
+      "default": "NOT_STARTED"
+    },
+    "process_health": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "evidence_conclusion": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "planned_duration_hours": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "actual_coverage_hours": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "markets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observations": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "gaps": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "latest_sample_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "storage_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_provenance": {
+      "type": "string",
+      "description": "sentinel default: UNKNOWN",
+      "default": "UNKNOWN"
+    },
+    "coverage_sufficient": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "artifact_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "campaign_id",
+    "title"
+  ],
+  "additionalProperties": false
+}

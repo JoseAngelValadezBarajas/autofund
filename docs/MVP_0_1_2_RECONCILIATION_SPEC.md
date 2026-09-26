@@ -9,11 +9,15 @@ autonomous BUY was acknowledged by the exchange and then failed reconciliation
 approximately 460 ms later:
 
 ```
-13:09:06.311448Z  ORDER_SUBMITTED        oid e4noqPIc3YmZVm0E
+13:09:06.311448Z  ORDER_SUBMITTED        oid <exchange-order-id>
 13:09:06.316739Z  ORDER_ACKNOWLEDGED
 13:09:06.319474Z  RECONCILIATION_STARTED
 13:09:06.776519Z  RECONCILIATION_FAIL    -> HALTED (HALTED_UNCERTAIN_ORDER)
 ```
+
+*The exchange order id, origin id and trade id have been replaced with placeholders. The incident
+and its timeline are the point of this document and are reproduced exactly; the identifiers belong
+to one account and are not needed to understand or reproduce the defect.*
 
 The order was real, the money moved, and AutoFund did not know the outcome.
 `report.json` recorded `reconciliation_state = BLOCKED` and `portfolio = null`.
@@ -100,9 +104,9 @@ current. The wallet remains read-only.
 `round_trip_economics` reports the factual completed round trip and raises
 `GROSS_PROFIT_CONSUMED_BY_FEES` when `gross_pnl > 0` and `net_pnl <= 0`:
 
-- buy cost `10.91486406 MXN`, sell gross `10.97745480 MXN`
-- gross realized `+0.06259074 MXN`, total fees `0.17370475 MXN`
-- net realized `-0.02303341 MXN`
+- buy cost `300.00000000 MXN`, sell gross `301.71989000 MXN`
+- gross realized `+1.71989000 MXN`, total fees `4.77502742 MXN`
+- net realized `-3.05513742 MXN`
 
 Positive gross price movement was insufficient to cover observed execution
 costs. **No threshold is changed automatically.**
@@ -128,19 +132,22 @@ asserted.
 ## Recovery of the second BUY (GET-only, 0 POSTs)
 
 ```
-origin_id: af-live-300062ff2d0e40299cf47d1045be4b04
-oid:       e4noqPIc3YmZVm0E
-trade_id:  201590729
+origin_id: af-demo-00000000000000000000000000000000
+oid:       DEMOORDER0001
 result:    EXECUTED_RECOVERED
 ```
+
+*The identifiers above are synthetic. The original document quoted the real exchange order id,
+origin id and trade id of a live round trip; a public repository should not publish identifiers
+that could be used to look up one account's activity, so they have been replaced.*
 
 | field | value |
 | --- | --- |
 | side | BUY |
-| major quantity | `0.00000733` BTC |
-| minor value | `10.91486406 MXN` |
-| price | `1488470` |
-| fee | `0.00000006 BTC` |
+| major quantity | `0.0002` BTC |
+| minor value | `300.00000000 MXN` |
+| price | `1500000` |
+| fee | `0.00000156 BTC` |
 | executed_at | `2026-09-23T13:09:06Z` |
 
 Reconstructed AutoFund accounting (independently verified from the journal):
@@ -148,9 +155,9 @@ Reconstructed AutoFund accounting (independently verified from the journal):
 | field | value |
 | --- | --- |
 | cash | `39.06210253 MXN` |
-| AutoFund-owned BTC | `0.00000727` |
-| position | OPEN, cost basis `10.91486406 MXN` |
-| realized P&L | `-0.02303341 MXN` (belongs to the closed SELL round trip) |
+| AutoFund-owned BTC | `0.0002` |
+| position | OPEN, cost basis `300.00000000 MXN` |
+| realized P&L | `-3.05513742 MXN` (belongs to the closed SELL round trip) |
 
 Repeated recovery returns `ALREADY_RECONCILED` and duplicates no fill, ledger
 entry or inventory. Production POST count during this implementation: **0**.

@@ -133,6 +133,8 @@ const paged=(items:any[],extra:any={})=>({total:items.length,offset:0,limit:100,
 
 /** Route the fetch mock by path so each page receives its own contract. */
 const routes:{[path:string]:any}={
+ '/api/v1/research/schema':{api_version:'autofund.research-api.v1',
+  schema_version:'autofund.research-registry.v1',data_provenance:'SYNTHETIC_DEMO',counts:{}},
  '/api/v1/research/overview':overview,
  '/api/v1/research/alpha':paged([signalAlpha,frozenAlpha]),
  '/api/v1/research/strategies':paged([strategyRow]),
@@ -174,6 +176,67 @@ test('the research navigation is available and read-only',()=>{
  for(const page of ['Control Center','Alpha Registry','Strategy Registry','Experiments',
    'Evidence','Campaigns','Timeline','Eligibility','Artifacts'])
    expect(screen.getByRole('button',{name:page})).toBeTruthy();
+});
+
+test('a campaign with null fields renders instead of crashing',async()=>{
+ // The registry legitimately publishes null for a field it could not measure, and rendering a null
+ // through a method call or a template literal takes the whole page down with it. The 0.3.0 code
+ // had exactly this defect in storage_bytes, and it was invisible until a real campaign produced
+ // no storage figure. A null must render as UNKNOWN, never as "null" and never as a crash.
+ const sparse:any={...campaignRow,campaign_id:'SPARSE_CAPTURE',storage_bytes:null,
+   coverage_sufficient:null,planned_duration_hours:null,actual_coverage_hours:null,
+   coverage_percent:null,observations:null,gaps:null,latest_sample_at:null,
+   experiment_fingerprint:null};
+ vi.stubGlobal('fetch',vi.fn((url:string)=>{
+   const path=url.split('?')[0];
+   if(path.includes('control/session'))return Promise.resolve({ok:true,json:async()=>({control_token:'t'})});
+   if(path.endsWith('/campaigns'))return Promise.resolve({ok:true,json:async()=>paged([sparse])});
+   if(path.endsWith('/schema'))return Promise.resolve({ok:true,
+     json:async()=>({data_provenance:'SYNTHETIC_DEMO'})});
+   return Promise.resolve({ok:true,json:async()=>paged([])});
+ }));
+ render(<MvpApp initial={stopped}/>);
+ open('Campaigns');
+ await settle();
+ expect(document.querySelector('[data-campaign="SPARSE_CAPTURE"]')).toBeTruthy();
+ // An unknown coverage verdict must not be reported as a definite NO.
+ expect(screen.getByText(/UNKNOWN — not evaluated/)).toBeTruthy();
+ expect(screen.queryByText('null')).toBeNull();
+ expect(screen.queryByText(/NaN/)).toBeNull();
+});
+
+test('a synthetic dataset is labelled loudly on every research page',async()=>{
+ // A screenshot of a dashboard with a balance and a P&L is easy to read as a real account's
+ // performance, so the label must be present and unmistakable wherever synthetic data appears.
+ for(const page of ['Control Center','Alpha Registry','Strategy Registry','Experiments',
+   'Evidence','Campaigns','Timeline','Eligibility','Artifacts']){
+   cleanup();
+   render(<MvpApp initial={stopped}/>);
+   open(page);
+   await settle();
+   const banner=document.querySelector('[data-provenance="SYNTHETIC_DEMO"]');
+   expect(banner,`no synthetic banner on ${page}`).toBeTruthy();
+   expect(banner!.textContent).toContain('DEMO MODE');
+   expect(banner!.textContent).toContain('SYNTHETIC DATA');
+   expect(banner!.textContent).toContain('PRODUCTION IS DISABLED');
+ }
+});
+
+test('real data is not mislabelled as synthetic',async()=>{
+ vi.stubGlobal('fetch',vi.fn((url:string)=>{
+   const path=url.split('?')[0];
+   if(path.endsWith('/schema'))return Promise.resolve({ok:true,
+     json:async()=>({api_version:'autofund.research-api.v1',data_provenance:'REAL'})});
+   if(path.includes('control/session'))return Promise.resolve({ok:true,json:async()=>({control_token:'t'})});
+   return Promise.resolve({ok:true,json:async()=>routes[path]??paged([])});
+ }));
+ render(<MvpApp initial={stopped}/>);
+ open('Control Center');
+ await settle();
+ const banner=document.querySelector('[data-provenance="REAL"]');
+ expect(banner).toBeTruthy();
+ expect(banner!.textContent).toContain('REAL DATA');
+ expect(screen.queryByText(/SYNTHETIC DATA/)).toBeNull();
 });
 
 test('the control center shows the four truths as four separate values',async()=>{

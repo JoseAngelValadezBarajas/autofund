@@ -1,13 +1,19 @@
-"""GET-only recovery of the unresolved second Production BUY.
+"""GET-only recovery of an unresolved Production BUY.
 
-Queries the real exchange for the acknowledged order and its trades, classifies
-the outcome deterministically, and reconstructs AutoFund accounting. It never
-submits anything: the only write path is unreachable here because no submission
-permit is ever created, and the transport rejects non-GET at the policy layer.
+The concrete incident this was written for is public in `docs/MVP_0_1_2_RECONCILIATION_SPEC.md`:
+a BUY was acknowledged by the exchange and then failed reconciliation 460 ms later, so a real order
+existed whose outcome AutoFund did not know. Reproducing that recovery needs the origin id of the
+blocked intent, which is account-specific, so it is supplied by the operator rather than committed.
 
-Run:  python scripts/recover_second_buy.py
+Queries the exchange for the acknowledged order and its trades, classifies the outcome
+deterministically, and reconstructs AutoFund accounting. It never submits anything: the only write
+path is unreachable here because no submission permit is ever created, and the transport rejects
+non-GET at the policy layer.
+
+Run:  python scripts/recover_second_buy.py --origin-id af-live-<32 hex chars>
 """
 
+import argparse
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -18,8 +24,10 @@ from autofund.live.execution import LiveExecution
 from autofund.live.journal import DEFAULT_JOURNAL, LiveExecutionJournal
 from autofund.live.models import LiveConfig
 
-ORIGIN = "af-live-300062ff2d0e40299cf47d1045be4b04"
-OID = "e4noqPIc3YmZVm0E"
+# The origin id of the blocked intent, supplied by the operator. It is deliberately not a
+# committed constant: it identifies a specific order on a specific account, and publishing it
+# would let a reader look up one account's activity.
+ORIGIN = ""
 OUT = Path("artifacts/mvp-certification/second-buy-recovery.json")
 
 
@@ -48,7 +56,19 @@ def isolated_journal() -> LiveExecutionJournal:
     return journal
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    global ORIGIN
+    parser = argparse.ArgumentParser(
+        prog="autofund recover-buy",
+        description="GET-only recovery of an unresolved Production order from the live journal")
+    parser.add_argument("--origin-id", dest="origin_id", default=ORIGIN,
+                        help="origin id of the blocked intent (as recorded in the live journal)")
+    parsed = parser.parse_args(argv)
+    if not parsed.origin_id:
+        parser.error("--origin-id is required: the origin id identifies a specific order on a "
+                     "specific account and is deliberately not committed to the repository")
+    ORIGIN = parsed.origin_id
+
     credentials = LiveCredentials.from_environment()
     client = BitsoProductionLiveClient(credentials, single_order_cap=Decimal("11"))
     journal = isolated_journal()
@@ -141,7 +161,10 @@ def main() -> int:
 
         certificate = {
             "certified_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "origin_id": ORIGIN, "oid": OID,
+            "origin_id": ORIGIN,
+            # Taken from the exchange response rather than a committed constant: the oid is a
+            # property of the remote order, so deriving it is both truthful and identifier-free.
+            "oid": orders[0].oid if orders else None,
             "remote_orders": [{"oid": o.oid, "state": o.state.value, "side": o.side.value,
                                "original_amount": str(o.original_amount),
                                "unfilled_amount": str(o.unfilled_amount)} for o in orders],

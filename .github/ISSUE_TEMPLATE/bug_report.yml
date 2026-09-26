@@ -1,0 +1,67 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two requests before you start:
+
+        **Never include credentials, API keys, `.env` contents, or real account data** — balances,
+        position sizes, cost bases or order identifiers. A report that quotes a secret is a second
+        copy of the secret. See [SECURITY.md](../SECURITY.md) if this is a security issue.
+
+        If this is about a financial decision, use the **Correctness issue** template instead; it
+        asks for the reproduction details that make such a report actionable.
+  - type: checkboxes
+    id: mode
+    attributes:
+      label: Which mode were you running?
+      options:
+        - label: Demo (`autofund demo`)
+        - label: Shadow
+        - label: Production
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The `product_version` shown in the UI header, or the output of `git rev-parse --short HEAD`
+      placeholder: "AutoFund MVP 0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Python version
+      placeholder: "Windows 11, Python 3.12.10"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem. Include the exact commands.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Relevant output
+      description: |
+        Paste error text, stack traces or the relevant fields from `/api/v1/research/schema`.
+        **Redact anything account-specific.**
+      render: text
+    validations:
+      required: false

@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofund.local/schemas/experiment.schema.json",
+  "title": "ExperimentRecord",
+  "description": "Public contract for experiment, generated from the domain model `autofund.research.models.ExperimentRecord` by scripts/export_schemas.py. Regenerate rather than editing: the model is the source of truth.",
+  "x-autofund-contract": "autofund.research.experiment.v1",
+  "type": "object",
+  "properties": {
+    "experiment_id": {
+      "type": "string"
+    },
+    "milestone": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "hypothesis": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "baseline_commit": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "description": "one of the ExperimentStatus values",
+      "default": "COMPLETED"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "development_interval": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "holdout_interval": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "forward_interval": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "markets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "strategies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "alpha_sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "economic_policy_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "risk_policy_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dataset_fingerprints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "result_classification": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "test_summary": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "superseded_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "supersedes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "experiment_id",
+    "milestone",
+    "title"
+  ],
+  "additionalProperties": false
+}

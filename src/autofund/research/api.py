@@ -54,6 +54,22 @@ class ResearchService:
         self.registry = registry
         self.orchestrator = orchestrator
 
+    def provenance(self) -> str:
+        """`SYNTHETIC_DEMO` when the registry was built from the demo dataset, else `REAL`.
+
+        Determined by looking for the demo dataset's own marker in the artifacts root, so the
+        answer comes from the data rather than from which command was run. The UI uses this to
+        label the whole Control Center, and a wrong label is a claim about evidence.
+        """
+        try:
+            from autofund.demo.dataset import is_demo_dataset
+        except ImportError:  # pragma: no cover - the demo package is always present here
+            return "REAL"
+        roots = self.registry.source_roots
+        if not roots:
+            return "REAL"
+        return ("SYNTHETIC_DEMO" if is_demo_dataset(artifacts_root=Path(roots[0])) else "REAL")
+
     def overview(self) -> dict[str, Any]:
         """The whole dashboard, from one consistent snapshot of the read model."""
         snapshot = self.orchestrator.snapshot() if self.orchestrator is not None else {}
@@ -292,10 +308,63 @@ def build_research_router(service: ResearchService) -> APIRouter:
 
     @router.get("/schema")
     def schema() -> dict[str, Any]:
-        """The registry's own metadata, so a client can tell what it is reading."""
-        return {"api_version": RESEARCH_API_VERSION, **service.registry.public()}
+        """The registry's own metadata, so a client can tell what it is reading.
+
+        `data_provenance` is derived from the artifacts themselves rather than from a mode flag.
+        That distinction matters: if a real certification were copied into a demo directory the UI
+        must not label it synthetic, and if a synthetic fixture were moved elsewhere it must still
+        declare itself. Reading the documents is the only way to be right about both.
+        """
+        payload = {"api_version": RESEARCH_API_VERSION, **service.registry.public()}
+        payload["data_provenance"] = service.provenance()
+        return payload
 
     return router
+
+
+def repository_root() -> Path:
+    """The repository this package lives in."""
+    return Path(__file__).resolve().parents[3]
+
+
+def service_for_root(artifacts_root: Path, orchestrator: Any = None) -> ResearchService:
+    """Build a service over a specific artifact root.
+
+    The root is a parameter rather than a constant because Demo mode reads a synthetic dataset from
+    a different directory than a real run. Hard-coding one path would either make the public demo
+    render an empty Control Center or make it read private runtime state, and both are worse than
+    passing the path in.
+
+    When the root holds the demo dataset, the demo experiment is declared to the builder. The
+    registry cannot infer an experiment from a file: experiments are declared, and only their
+    results are read. Passing the seed in keeps that rule intact and keeps the registry free of any
+    knowledge that demo mode exists.
+    """
+    repository = repository_root()
+    extra_seeds: tuple[Any, ...] = ()
+    try:
+        from autofund.demo.dataset import DEMO_SEED, is_demo_dataset
+
+        if is_demo_dataset(artifacts_root=artifacts_root):
+            extra_seeds = (DEMO_SEED,)
+    except ImportError:  # pragma: no cover - the demo package is always present in this repo
+        extra_seeds = ()
+    registry = ResearchRegistryBuilder(artifacts_root=artifacts_root,
+                                       repository_root=repository,
+                                       extra_seeds=extra_seeds).build()
+    if orchestrator is None:
+        orchestrator = _default_orchestrator(repository)
+    return ResearchService(registry=registry, orchestrator=orchestrator)
+
+
+def _default_orchestrator(repository: Path) -> Any:
+    """An orchestrator for the snapshot half of the read model, or None if it cannot be built."""
+    try:
+        from autofund.mvp.orchestrator import AutoFundOrchestrator
+
+        return AutoFundOrchestrator(artifacts=repository / "artifacts" / "mvp" / "runtime")
+    except Exception:
+        return None
 
 
 @lru_cache(maxsize=1)
@@ -304,15 +373,11 @@ def _default_service() -> ResearchService:
 
     Cached because the artifact walk costs about a second on a cold cache and the result is
     immutable for the process lifetime. A dashboard request must never pay that cost.
-    """
-    repository = Path(__file__).resolve().parents[3]
-    registry = ResearchRegistryBuilder(artifacts_root=repository / "artifacts",
-                                       repository_root=repository).build()
-    try:
-        from autofund.mvp.orchestrator import AutoFundOrchestrator
 
-        orchestrator: Any = AutoFundOrchestrator(artifacts=repository / "artifacts" / "mvp"
-                                                 / "runtime")
-    except Exception:
-        orchestrator = None
-    return ResearchService(registry=registry, orchestrator=orchestrator)
+    This is the module-level convenience used by tests and by any caller that does not have an
+    application instance. The live application passes its own root instead, so the dashboard always
+    reflects the directory the running process actually wrote to.
+    """
+    repository = repository_root()
+    return service_for_root(repository / "artifacts")
+

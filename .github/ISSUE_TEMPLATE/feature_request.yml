@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest a capability or an improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening a feature request, please check [docs/roadmap.md](../docs/roadmap.md) and the
+        **Explicit non-goals** section at the bottom of it. Some things are deliberately out of scope
+        — promising a return, removing friction from real-money operation, widening the capital
+        envelope by configuration, and adding withdrawal or transfer capability among them.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: |
+        Describe the problem rather than the solution. "I cannot tell why a signal was rejected"
+        is more useful than "add a button that shows rejections", because it leaves the design open.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      options:
+        - Research platform
+        - Research Control Center
+        - Demo mode
+        - Execution or recovery
+        - Accounting
+        - Documentation
+        - Tooling or CI
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      options:
+        - label: This does not make it easier to reach real-money operation by accident
+          required: false
+        - label: This does not weaken the capital envelope, the economic gate or the risk gate
+          required: false

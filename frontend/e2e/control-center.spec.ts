@@ -93,11 +93,13 @@ test('the registries show prediction, economics and provenance apart',async({pag
   // Evidence explorer: provenance distinguishes a measurement from a fixture.
   await page.getByRole('button',{name:'Evidence'}).click();
   await expect(page.getByRole('heading',{name:'Evidence explorer',level:2})).toBeVisible();
-  const rows=page.locator('[data-provenance]');
-  // The registries are fetched after the page mounts, so wait for a row before counting.
+  // Scoped to `[data-evidence]`, the row marker. The provenance banner carries `data-provenance`
+  // as well, so selecting on that alone also matched the banner and produced a null reading.
+  const rows=page.locator('[data-evidence]');
   await expect(rows.first()).toBeVisible();
   expect(await rows.count()).toBeGreaterThan(0);
-  // Every row must declare its provenance and whether it is a real observation.
+  // Every row must declare its provenance and whether it is a real observation. A row missing the
+  // second would be a null, which is not a verdict either way.
   for(const value of await rows.evaluateAll(
     (nodes:Element[])=>nodes.map(n=>n.getAttribute('data-real-observation'))))
     expect(['true','false']).toContain(value);

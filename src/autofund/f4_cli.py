@@ -8,6 +8,14 @@ def main() -> int:
         from autofund.mvp.app import main as app_main
 
         return app_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "demo":
+        # The public entry point. It is `app --mode demo` with the safe defaults already applied,
+        # so the shortest command a new reader types is also the safest one. There is no separate
+        # demo application: the same code path runs, with the mode deciding what it is allowed to
+        # reach.
+        from autofund.mvp.app import main as app_main
+
+        return app_main(["--mode", "demo", *sys.argv[2:]], prog="autofund demo")
     if len(sys.argv) > 1 and sys.argv[1] == "live":
         from autofund.live.cli import main as live_main
 

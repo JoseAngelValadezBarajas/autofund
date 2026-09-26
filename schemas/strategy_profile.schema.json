@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofund.local/schemas/strategy_profile.schema.json",
+  "title": "StrategyProfileRecord",
+  "description": "Public contract for strategy profile, generated from the domain model `autofund.research.models.StrategyProfileRecord` by scripts/export_schemas.py. Regenerate rather than editing: the model is the source of truth.",
+  "x-autofund-contract": "autofund.research.strategy-profile.v1",
+  "type": "object",
+  "properties": {
+    "profile_id": {
+      "type": "string"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "description": "one of the StrategyStatus values",
+      "default": "RESEARCH"
+    },
+    "markets_evaluated": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timeframes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "alpha_dependency": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "entry_model": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "exit_model": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "risk_model": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "economic_policy_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "development_evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "holdout_evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "forward_shadow_evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "production_certification": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "predecessor_profile": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "successor_profile": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "frozen": {
+      "type": "boolean",
+      "default": false
+    },
+    "engineering_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "economic_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "risk_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "production_eligible": {
+      "type": "boolean",
+      "default": false
+    },
+    "round_trips": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "net_pnl_mxn": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "max_drawdown_mxn": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "median_mae_mxn": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "median_mfe_mxn": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "economic_rejection_rate": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "risk_rejection_rate": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mae_mfe_available": {
+      "type": "boolean",
+      "default": false
+    },
+    "artifact_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "profile_id",
+    "strategy_id"
+  ],
+  "additionalProperties": false
+}

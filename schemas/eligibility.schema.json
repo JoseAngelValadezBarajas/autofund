@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofund.local/schemas/eligibility.schema.json",
+  "title": "ProductionEligibilityRecord",
+  "description": "Public contract for eligibility, generated from the domain model `autofund.research.models.ProductionEligibilityRecord` by scripts/export_schemas.py. Regenerate rather than editing: the model is the source of truth.",
+  "x-autofund-contract": "autofund.research.eligibility.v1",
+  "type": "object",
+  "properties": {
+    "market": {
+      "type": "string"
+    },
+    "profile_id": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "alpha_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "research_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "data_quality": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "strategy_compatibility": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "economic_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "risk_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "certification_status": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "authorization_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "position_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "blocking_reason": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "eligible": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "market"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofund.local/schemas/certification.schema.json",
+  "title": "CertificationRecord",
+  "description": "Public contract for certification, generated from the domain model `autofund.research.models.CertificationRecord` by scripts/export_schemas.py. Regenerate rather than editing: the model is the source of truth.",
+  "x-autofund-contract": "autofund.research.certification.v1",
+  "type": "object",
+  "properties": {
+    "certification_id": {
+      "type": "string"
+    },
+    "experiment_id": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "market": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "profile_id": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "certified": {
+      "type": "boolean",
+      "default": false
+    },
+    "status": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "holdout_inspected": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "engineering_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "evidence_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "economic_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "authorization_status": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "certified_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "certification_id"
+  ],
+  "additionalProperties": false
+}

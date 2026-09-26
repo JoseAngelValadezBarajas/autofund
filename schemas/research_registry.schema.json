@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofund.local/schemas/research_registry.schema.json",
+  "title": "ResearchRegistry",
+  "description": "Public contract for research registry, generated from the domain model `autofund.research.models.ResearchRegistry` by scripts/export_schemas.py. Regenerate rather than editing: the model is the source of truth.",
+  "x-autofund-contract": "autofund.research-registry.v1",
+  "type": "object",
+  "properties": {
+    "alpha_sources": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "one of the AlphaSourceRecord values"
+      }
+    },
+    "strategies": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "one of the StrategyProfileRecord values"
+      }
+    },
+    "experiments": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "one of the ExperimentRecord values"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "one of the EvidenceRecord values"
+      }
+    },
+    "datasets": {
+      "type": "array",
+      "items": {}
+    },
+    "certifications": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "one of the CertificationRecord values"
+      }
+    },
+    "campaigns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "one of the ResearchCampaignRecord values"
+      }
+    },
+    "eligibility": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "one of the ProductionEligibilityRecord values"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": {}
+      }
+    },
+    "built_at": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "default": "autofund.research-registry.v1"
+    },
+    "source_roots": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "invalid_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

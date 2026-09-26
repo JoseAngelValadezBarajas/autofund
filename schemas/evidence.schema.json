@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofund.local/schemas/evidence.schema.json",
+  "title": "EvidenceRecord",
+  "description": "Public contract for evidence, generated from the domain model `autofund.research.models.EvidenceRecord` by scripts/export_schemas.py. Regenerate rather than editing: the model is the source of truth.",
+  "x-autofund-contract": "autofund.research.evidence.v1",
+  "type": "object",
+  "properties": {
+    "evidence_id": {
+      "type": "string"
+    },
+    "provenance": {
+      "type": "string",
+      "description": "one of the EvidenceProvenance values"
+    },
+    "experiment_id": {
+      "type": "string",
+      "default": "NOT_RECORDED",
+      "description": "sentinel default: NOT_RECORDED"
+    },
+    "dataset_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "start": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "end": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "markets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observation_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "quality": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "sentinel default: UNKNOWN"
+    },
+    "gaps": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "artifact_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "alpha_sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "strategies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "evidence_id",
+    "provenance"
+  ],
+  "additionalProperties": false
+}
