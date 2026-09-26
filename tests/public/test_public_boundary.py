@@ -557,34 +557,45 @@ def test_documented_node_version_satisfies_the_frontend_toolchain() -> None:
 
 
 def test_the_e2e_config_does_not_hardcode_a_windows_path() -> None:
-    """The Playwright fixture servers must start on any platform.
+    """The Playwright fixture servers must start on any platform and without a virtualenv.
 
-    Every `webServer.command` began with `.venv\\Scripts\\autofund`, the Windows layout. Linux has no
-    such path, so Playwright could not start its servers and the end-to-end job failed with exit
-    code 127 before running a single test - the suite had only ever run on Windows.
+    Four separate problems were fixed here, each of which cost a CI run because the end-to-end suite
+    had only ever been executed on the machine it was written on:
 
-    A virtual environment puts console scripts in `Scripts` on Windows and `bin` elsewhere, so the
-    check is that the config derives the path rather than spelling out either one.
+    1. Every `webServer.command` began with `.venv\\Scripts\\autofund`, the Windows layout, which does
+       not exist on Linux.
+    2. CI installs with `actions/setup-python`, which puts `autofund` on `PATH` and creates no
+       `.venv`, so a correct venv path still does not exist there.
+    3. The lookup was relative to the config file's directory, so it tested `frontend/.venv`.
+    4. Windows names the console script `autofund.exe`; `existsSync` does not apply `PATHEXT`, so
+       testing the extensionless name reported "no virtualenv" on Windows.
+
+    The assertions below cover each, because any one of them regressing restores the failure.
     """
     config = (REPO_ROOT / "frontend" / "playwright.config.ts").read_text(encoding="utf-8")
 
-    # Comments are stripped before checking. The config's own docstring necessarily quotes the
-    # Windows path it used to hardcode, so scanning the raw text flags the explanation as the
-    # defect - the same self-reference trap the licence and leak checks hit.
+    # Comments are stripped first. The config's docstring necessarily quotes the Windows path it used
+    # to hardcode, so scanning raw text flags the explanation as the defect - the same
+    # self-reference trap the licence and leak checks hit.
     code = "\n".join(line for line in config.splitlines()
                      if not line.strip().startswith(("*", "//", "/*")))
 
-    windows_literal = ".venv" + chr(92) + "Scripts"
-    assert windows_literal not in code, (
-        "playwright.config.ts hardcodes the Windows virtualenv path, which does not exist on Linux")
-    assert "process.platform" in code, (
-        "playwright.config.ts does not select the interpreter path by platform")
-    # `path.join` rather than a separator literal, so the result is native on both platforms.
-    assert "node:path" in code and "join(" in code, (
-        "playwright.config.ts should build the path with path.join so the separator is native")
-    # Both virtualenv layouts must be named, or one platform cannot work.
-    assert "'bin'" in code, "the POSIX virtualenv directory is not referenced"
-    assert "'Scripts'" in code, "the Windows virtualenv directory is not referenced"
+    assert (".venv" + chr(92) + "Scripts") not in code, (
+        "playwright.config.ts hardcodes the Windows virtualenv path")
+    assert "process.platform" in code, "the interpreter directory is not selected by platform"
+    assert "Scripts" in code and "bin" in code, (
+        "both virtualenv layouts must be named, or one platform cannot work")
+    # path.join, so the separator is native rather than mixed.
+    assert "node:path" in code and "join(" in code, "the path is not built with path.join"
+    # Anchored to the config file, since a relative lookup resolved against frontend/.
+    assert "import.meta.dirname" in code, (
+        "the virtualenv lookup is not anchored to the config file's own directory")
+    # Windows console scripts carry .exe and existsSync does not apply PATHEXT.
+    assert "autofund.exe" in code, (
+        "the Windows console script name is not considered, so existsSync never finds it")
+    # A fallback for CI, which has no virtualenv at all.
+    assert "'autofund'" in code, (
+        "there is no fallback to the console script on PATH, which CI relies on")
 
 
 def test_metadata_declares_the_same_license_as_the_license_file() -> None:
