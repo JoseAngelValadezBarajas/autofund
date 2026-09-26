@@ -135,13 +135,27 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     artifacts = args.artifacts
     artifacts.mkdir(parents=True, exist_ok=True)
+    # The Control Center reads its research registry from this directory, so the synthetic dataset
+    # must be generated here or the dashboard reports no campaigns - which makes the engineering
+    # verdict DEGRADED, because collectors then read UNKNOWN, and the end-to-end assertion fails for
+    # a reason that has nothing to do with the UI under test.
+    #
+    # This was masked locally because `artifacts/demo` already existed from an earlier run, so the
+    # registry found campaigns that CI never created. A fixture that only works on the machine it
+    # was written on is not a fixture.
+    from autofund.demo import generate
+
+    generate(artifacts_root=artifacts)
     orchestrator = AutoFundOrchestrator(artifacts, DemoAutonomousRunner(), demo=True)
     orchestrator.startup()
     seed(orchestrator)
     orchestrator.start_scanner(sc.MarketScanner(FixtureScannerSource(datetime.now(UTC))), interval_seconds=3600)
     orchestrator.scan_markets(now=datetime.now(UTC))
     dist = Path(__file__).parents[1] / "frontend" / "dist"
-    app = create_mvp_app(orchestrator, dist, host="127.0.0.1", port=args.port)
+    # The artifacts root is passed through so the research read model is built over the same
+    # directory this fixture just seeded, rather than over the developer's own artifacts.
+    app = create_mvp_app(orchestrator, dist, host="127.0.0.1", port=args.port,
+                         artifacts_root=artifacts)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
     return 0
 

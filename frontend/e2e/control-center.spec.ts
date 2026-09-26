@@ -121,11 +121,19 @@ test('a healthy collector with insufficient coverage is not read as a market con
   await page.getByRole('button',{name:'Campaigns'}).click();
   await expect(page.getByRole('heading',{name:'Campaigns',level:2})).toBeVisible();
 
-  const campaign=page.locator('[data-campaign]').first();
-  await expect(campaign).toBeVisible();
-  // Process health and evidence conclusion are two different questions.
-  await expect(campaign).toHaveAttribute('data-process-health','HEALTHY');
-  await expect(campaign).toHaveAttribute('data-coverage-sufficient','false');
+  // Selected by the property under test - a collector that ran correctly AND whose coverage was
+  // evaluated as insufficient - rather than by position or by id. Positional selection made this
+  // depend on registry ordering, and id selection would hardcode which campaign happens to be in
+  // the fixture. Selecting the combination asserts exactly the claim: health and conclusion are
+  // independent, and a healthy process can still be unable to support a conclusion.
+  const healthyButInsufficient=
+    page.locator('[data-campaign][data-process-health="HEALTHY"][data-coverage-sufficient="false"]');
+  await expect(healthyButInsufficient.first()).toBeVisible();
+  // An unevaluated coverage verdict must be distinguishable from a negative one.
+  await expect(page.locator('[data-coverage-sufficient="UNKNOWN"]').first()).toBeVisible();
+  // And a collector with no data at all reports health UNKNOWN rather than a confident HEALTHY.
+  await expect(page.locator('[data-campaign][data-process-health="UNKNOWN"]').first()).toBeVisible();
+
   // The page must say why the conclusion is limited rather than implying a market verdict.
   await expect(page.getByText(/a rare event could not have been observed/).first()).toBeVisible();
 

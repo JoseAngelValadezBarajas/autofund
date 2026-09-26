@@ -234,9 +234,11 @@ jobs:
         run: npm run build
         working-directory: frontend
       - name: Playwright
-        # Visual-regression baselines are captured on Windows, so pixel comparison is skipped on
-        # Linux. The behavioural assertions still run, and the baselines are validated locally.
-        # Reporting this honestly is better than a green job that compared nothing.
+        # Visual-regression baselines are captured on Windows and Playwright suffixes them by OS, so
+        # the config sets `ignoreSnapshots` on non-Windows hosts. Pixel comparison is therefore
+        # skipped on Linux and the behavioural assertions still run. Regenerating baselines per OS
+        # would commit a second image set nobody has verified by eye, so the limitation is stated
+        # here and in the config rather than left implicit.
         run: npx playwright test
         working-directory: frontend
         env:

@@ -598,6 +598,42 @@ def test_the_e2e_config_does_not_hardcode_a_windows_path() -> None:
         "there is no fallback to the console script on PATH, which CI relies on")
 
 
+def test_the_visual_baseline_policy_matches_reality() -> None:
+    """The claim that pixel comparison is scoped by OS must match the config and the baselines.
+
+    CI's comment said baselines were Windows-only and pixel comparison was skipped elsewhere, but
+    nothing implemented the skip: the config had no `ignoreSnapshots`, so on Linux every screenshot
+    assertion tried to compare against a Linux image that has never existed and failed. A comment
+    describing behaviour that does not exist is worse than no comment, because it stops anyone
+    looking for the real limitation.
+    """
+    config = (REPO_ROOT / "frontend" / "playwright.config.ts").read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    snapshots = list((REPO_ROOT / "frontend" / "e2e").rglob("*-snapshots/*.png"))
+    assert snapshots, "no visual baselines found; this check would be vacuous"
+    suffixes = {path.stem.rsplit("-", 1)[-1] for path in snapshots}
+    assert suffixes == {"win32"}, (
+        f"baselines exist for platforms other than win32 ({suffixes}); the config's scoping and "
+        "this assertion both assume Windows-only baselines")
+
+    assert "ignoreSnapshots" in config, (
+        "playwright.config.ts does not scope snapshot comparison, so a non-Windows host compares "
+        "against baselines that do not exist for it")
+    # The setting must be conditional on the platform. Read it as code, with comments stripped,
+    # because the explanatory comment above the setting also mentions process.platform and would
+    # otherwise satisfy the check on its own.
+    code = "\n".join(line for line in config.splitlines()
+                     if not line.strip().startswith(("*", "//", "/*")))
+    setting = next((line for line in code.splitlines() if "ignoreSnapshots:" in line), "")
+    assert "process.platform" in setting, (
+        f"snapshot comparison is not scoped by platform; the setting reads: {setting.strip()!r}")
+    assert "win32" in setting, (
+        f"the snapshot scope does not name the platform the baselines belong to: {setting.strip()!r}")
+    assert "baselines are captured on Windows" in workflow or "Windows" in workflow, (
+        "CI no longer documents where the baselines come from")
+
+
 def test_metadata_declares_the_same_license_as_the_license_file() -> None:
     """Package metadata and the license file disagreeing is a real defect for a consumer."""
     import tomllib

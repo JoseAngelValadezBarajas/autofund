@@ -560,7 +560,12 @@ export function CampaignsPage(){
       <p className="cc-note">{data.total} campaign{data.total===1?'':'s'}.</p>
       {data.items.map(c=><article key={c.campaign_id} data-campaign={c.campaign_id}
         data-process-health={c.process_health} data-evidence-conclusion={c.evidence_conclusion}
-        data-coverage-sufficient={c.coverage_sufficient}>
+        // Rendered as an explicit three-valued string. `coverage_sufficient` is null when the
+        // registry could not evaluate it, and React writes a null attribute as "", which is
+        // indistinguishable from false - an unevaluated coverage verdict would then read as a
+        // definite negative finding.
+        data-coverage-sufficient={c.coverage_sufficient==null?'UNKNOWN'
+          :c.coverage_sufficient?'true':'false'}>
         <h4>{c.campaign_id} — {c.title}</h4>
         <div className="cc-truths">
           <div className="cc-truth cc-engineering"><small>PROCESS HEALTH</small>
