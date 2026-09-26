@@ -81,6 +81,25 @@ that widens the envelope or enables promotion.
 | Demo mode | Operational |
 | Experiment Engine | **Not implemented** — planned for 0.3.1 |
 
+## Licensing
+
+**Open source under the Apache License 2.0** — see [`LICENSE`](../LICENSE). The rationale for
+choosing it over MIT, alongside what either implies for a downstream user, is recorded in
+[licensing-decision.md](licensing-decision.md).
+
+## Package metadata
+
+| Field | Value |
+|---|---|
+| Distribution name | `autofund` |
+| Software version | `0.3.0` |
+| License | `Apache-2.0` (`License-Expression` in built metadata) |
+| Python | `>=3.12` |
+| Node | 20+ (frontend build only) |
+| Build requires | `setuptools>=77.0.1` |
+| Frontend package | `autofund-dashboard@0.3.0`, `private: true` |
+| Repository URL | not yet declared — deliberately absent rather than a placeholder that does not resolve |
+
 ## How to verify these claims yourself
 
 Every number above is reproducible from a clone with no credentials:

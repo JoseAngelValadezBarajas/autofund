@@ -163,6 +163,38 @@ def main(argv: list[str] | None = None) -> int:
     cert.check("documentation is present", len(docs) >= 8, f"{len(docs)} documents")
     cert.check("schemas are present", len(list((clone / "schemas").glob("*.json"))) == 8)
 
+    print("\n2b. the license is present, complete and consistent")
+    license_file = clone / "LICENSE"
+    if cert.check("LICENSE is in the published tree", license_file.is_file()):
+        text = license_file.read_text(encoding="utf-8")
+        cert.check("it is the Apache License 2.0",
+                   "Apache License" in text and "Version 2.0, January 2004" in text)
+        cert.check("the terms are complete",
+                   "END OF TERMS AND CONDITIONS" in text
+                   and "9. Accepting Warranty or Additional Liability." in text)
+        cert.check("the appendix placeholders were filled in",
+                   "[yyyy]" not in text and "[name of copyright owner]" not in text)
+        # A dependency's copyright line in the appendix would mean the wrong holder was published.
+        appendix = text[text.index("APPENDIX"):] if "APPENDIX" in text else ""
+        notices = [line.strip() for line in appendix.splitlines()
+                   if line.strip().startswith("Copyright")]
+        cert.check("the appendix names this project, not another party",
+                   len(notices) == 1 and "AutoFund" in notices[0], notices[0] if notices else "")
+
+    import tomllib
+
+    pyproject = tomllib.loads((clone / "pyproject.toml").read_text(encoding="utf-8"))
+    cert.check("pyproject declares the license",
+               pyproject["project"].get("license") == "Apache-2.0")
+    cert.check("pyproject carries the license file into distributions",
+               "LICENSE" in pyproject["project"].get("license-files", []))
+    package = json.loads((clone / "frontend" / "package.json").read_text(encoding="utf-8"))
+    cert.check("the frontend package declares the license",
+               package.get("license") == "Apache-2.0")
+    readme = (clone / "README.md").read_text(encoding="utf-8")
+    cert.check("the README states the license rather than deferring it",
+               "Apache License 2.0" in readme or "Apache-2.0" in readme)
+
     print("\n3. no credential is required")
     # A deliberately empty environment apart from what a shell always provides. If the demo needed a
     # credential, this is where it would fail.

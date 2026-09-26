@@ -146,6 +146,17 @@ Participation is covered by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## License
 
-No license has been selected yet, so contributions cannot currently be licensed to anyone. See
-`docs/licensing-decision.md`. Until a license exists, treat contributions as source-available rather
-than open source, and do not assume redistribution rights.
+AutoFund is licensed under the [Apache License 2.0](LICENSE). By contributing, you agree that your
+contribution is licensed under the same terms — that is what section 5 of the license means by a
+contribution "intentionally submitted for inclusion in the Work".
+
+Two consequences worth knowing before you contribute:
+
+- **Apache-2.0 section 4(b) requires modified files to carry a notice stating that they were
+  changed.** Git history normally satisfies this for source files; keep commits focused and their
+  messages accurate, and do not strip existing notices.
+- **Changing the license later requires the agreement of every copyright holder**, which includes
+you once your contribution is merged. If you have a reason to object to Apache-2.0, raise it before
+contributing rather than after.
+
+Copyright 2026 AutoFund contributors.

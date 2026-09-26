@@ -286,18 +286,224 @@ def test_schema_fields_match_the_live_model() -> None:
             f"{sorted(documented - live)}")
 
 
-# ---- §59: no open-source claim before a license exists -----------------------------------------
+# ---- §59, §32: the open-source claim is backed by a real license -------------------------------
 
 
-def test_no_open_source_claim_before_a_license_is_chosen() -> None:
-    """Without a license the default is all rights reserved, so the claim would be false."""
-    if (REPO_ROOT / "LICENSE").exists():
-        pytest.skip("a license has been added; the claim is now legitimate")
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8").lower()
-    for claim in ("this project is open source", "licensed under", "open-source license"):
-        assert claim not in readme, f"README claims open source without a license: {claim!r}"
-    # The README must say what the actual position is.
-    assert "source-available" in readme
+def test_the_project_is_open_source_and_the_license_proves_it() -> None:
+    """The open-source claim must be backed by an actual license file.
+
+    This replaces the temporary gate that forbade the claim while no license existed. That gate
+    served its purpose and is gone; what replaces it is the durable invariant, which is that the
+    claim and the license must agree. A README describing the project as open source while `LICENSE`
+    is absent (or names a different license) is a false legal claim, so the two are checked
+    together rather than separately, in either direction.
+    """
+    license_file = REPO_ROOT / "LICENSE"
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    readme_lower = readme.lower()
+
+    claims_open_source = "open source" in readme_lower or "open-source" in readme_lower
+    if claims_open_source:
+        assert license_file.exists(), (
+            "the README describes the project as open source but no LICENSE file exists; "
+            "without a license the default is all rights reserved, which makes the claim false")
+    if license_file.exists():
+        text = license_file.read_text(encoding="utf-8")
+        assert "Apache License" in text and "Version 2.0" in text, (
+            "the LICENSE file is not the Apache License 2.0")
+
+
+def test_the_license_is_the_unmodified_canonical_text() -> None:
+    """A license that has been edited is not the license it claims to be.
+
+    Checked structurally rather than by hash: the appendix is *meant* to have its bracketed
+    placeholders replaced with a real year and holder, so the file legitimately differs from the
+    canonical text in exactly that one spot. What must not differ is the terms - so the numbered
+    sections are required in order, the placeholder must be gone, and the boilerplate notice must
+    survive intact.
+    """
+    text = (REPO_ROOT / "LICENSE").read_text(encoding="utf-8")
+
+    sections = [
+        "Apache License",
+        "Version 2.0, January 2004",
+        "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION",
+        "1. Definitions.",
+        "2. Grant of Copyright License.",
+        "3. Grant of Patent License.",
+        "4. Redistribution.",
+        "5. Submission of Contributions.",
+        "6. Trademarks.",
+        "7. Disclaimer of Warranty.",
+        "8. Limitation of Liability.",
+        "9. Accepting Warranty or Additional Liability.",
+        "END OF TERMS AND CONDITIONS",
+        "APPENDIX: How to apply the Apache License to your work.",
+        "Licensed under the Apache License, Version 2.0 (the \"License\");",
+        "limitations under the License.",
+    ]
+    for section in sections:
+        assert section in text, f"the LICENSE is missing: {section!r}"
+
+    # Terms must appear in their canonical order, not merely be present.
+    positions = [text.index(section) for section in sections]
+    assert positions == sorted(positions), "the LICENSE sections are out of canonical order"
+
+    # The appendix instructs the licensee to fill in the placeholders, so they must be filled in.
+    assert "[yyyy]" not in text, "the copyright year placeholder was never replaced"
+    assert "[name of copyright owner]" not in text, "the copyright holder placeholder is unfilled"
+
+
+def test_the_license_does_not_carry_another_partys_copyright() -> None:
+    """The appendix must name this project, not the dependency the text was copied from.
+
+    Several packages ship the standard Apache text with their own copyright line substituted into
+    the appendix. Adopting one of those wholesale would publish a third party's copyright notice as
+    this project's license, which is both incorrect and misleading about who holds the copyright.
+    """
+    text = (REPO_ROOT / "LICENSE").read_text(encoding="utf-8")
+    appendix = text[text.index("APPENDIX"):]
+    notice = [line for line in appendix.splitlines()
+              if line.strip().startswith("Copyright")]
+    assert len(notice) == 1, f"expected exactly one copyright line in the appendix: {notice}"
+    assert "AutoFund" in notice[0], f"the appendix names someone else: {notice[0]!r}"
+
+
+def test_version_is_declared_consistently_everywhere() -> None:
+    """One version, declared in several places, all agreeing.
+
+    `pyproject.toml` read `0.5.0` while `src/autofund/version.py` reported `0.3.0`. Two declarations
+    of the same fact that had quietly diverged, which means a built distribution would have been
+    labelled with a version the running product never reports. Nothing failed, because nothing
+    compared them.
+    """
+    import tomllib
+
+    from autofund.version import VERSION
+
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["project"]["version"] == VERSION, (
+        f"pyproject declares {pyproject['project']['version']!r} but the runtime reports "
+        f"{VERSION!r}")
+
+    package = json.loads((REPO_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    assert package.get("version") == VERSION, (
+        f"frontend/package.json declares {package.get('version')!r} but the runtime reports "
+        f"{VERSION!r}")
+
+    # The README must not claim a different version either.
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert VERSION in readme, f"the README does not mention the current version {VERSION!r}"
+
+
+def test_no_file_declares_a_different_license() -> None:
+    """An absent per-file header is fine; a contradictory one is not.
+
+    Apache-2.0 does not require a header in every file, so their absence is not a defect. What would
+    be a defect is a source file, at present or in future, declaring a conflicting license - a
+    `GPL` SPDX line copied in with a snippet, say. That is checked, and only that.
+    """
+    import re
+
+    # This file necessarily contains the pattern it is looking for, so scanning it would match its
+    # own regex literal. The same self-reference trap the leak tests hit: a checker that reads
+    # source text tends to find itself.
+    self_path = "tests/public/test_public_boundary.py"
+
+    spdx = re.compile(r"SPDX-License-Identifier:\s*([A-Za-z0-9.\-+]+)", re.IGNORECASE)
+    conflicting: list[str] = []
+    for path in _tracked():
+        if path.replace("\\", "/") == self_path:
+            continue
+        if Path(path).suffix.lower() not in {".py", ".ts", ".tsx", ".js", ".mjs", ".css", ".sh"}:
+            continue
+        index = REPO_ROOT / path
+        try:
+            text = index.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for identifier in spdx.findall(text):
+            if identifier.upper() != "APACHE-2.0":
+                conflicting.append(f"{path}: {identifier}")
+    assert not conflicting, f"files declare a conflicting license: {conflicting}"
+
+
+def test_the_build_floor_can_parse_the_license_metadata() -> None:
+    """The declared build floor must be a setuptools that accepts PEP 639 license metadata.
+
+    `requires = ["setuptools>=68"]` was in place until the license was added, and 68 cannot parse
+    `license = "Apache-2.0"` at all - it raises `configuration error: project.license must be valid
+    exactly by one definition`. Adding the license silently invalidated the declared floor.
+
+    The reason it stayed invisible is worth recording: a build under isolation resolves
+    `setuptools>=68` to the *newest* release, so the floor is never exercised. It only surfaced by
+    installing 68 deliberately and building with `--no-isolation`. Measured, 76.1.0 rejects and
+    77.0.1 builds.
+
+    This test is deliberately cheap - a version comparison rather than a real build, which CI does
+    separately - because it runs on every change and a full build does not.
+    """
+    import tomllib
+
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requires = pyproject["build-system"]["requires"]
+    setuptools_spec = next((entry for entry in requires if entry.startswith("setuptools")), None)
+    assert setuptools_spec, f"no setuptools floor is declared: {requires}"
+
+    parsed = re.search(r">=\s*([0-9]+)\.([0-9]+)(?:\.([0-9]+))?", setuptools_spec)
+    assert parsed, f"cannot parse the setuptools floor: {setuptools_spec!r}"
+    floor = tuple(int(part) for part in parsed.groups(default="0"))
+    assert floor >= (77, 0, 1), (
+        f"setuptools floor {floor} is below 77.0.1, which cannot parse PEP 639 license metadata; "
+        "a build with that version fails outright")
+
+
+def test_documented_python_version_matches_the_package_requirement() -> None:
+    """The README told a reader they needed 3.11+ while the package requires 3.12.
+
+    A person on 3.11 would have followed the documented instructions and hit a resolver failure,
+    which is a bad first experience and entirely avoidable. Documentation about a hard requirement is
+    a claim the metadata can check.
+    """
+    import tomllib
+
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requires = pyproject["project"]["requires-python"]
+    parts = re.search(r">=\s*([0-9]+)\.([0-9]+)", requires)
+    assert parts, f"cannot parse requires-python: {requires!r}"
+    major, minor = parts.group(1), parts.group(2)
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"Python {major}.{minor}" in readme, (
+        f"the README does not state the required Python version {major}.{minor}, "
+        f"which pyproject.toml declares as {requires!r}")
+
+    # And it must not advertise a lower version anywhere.
+    for other in re.findall(r"Python (\d+)\.(\d+)", readme):
+        assert other >= (major, minor), (
+            f"the README advertises Python {other[0]}.{other[1]}, below the required "
+            f"{major}.{minor}")
+
+
+def test_metadata_declares_the_same_license_as_the_license_file() -> None:
+    """Package metadata and the license file disagreeing is a real defect for a consumer."""
+    import tomllib
+
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project = pyproject["project"]
+    declared = project.get("license")
+    # Accept either the PEP 639 string form or the classic table form.
+    if isinstance(declared, dict):
+        assert declared.get("text") == "Apache-2.0", f"unexpected license table: {declared}"
+    else:
+        assert declared == "Apache-2.0", f"unexpected license value: {declared!r}"
+
+    assert "LICENSE" in project.get("license-files", []), (
+        "the license file is not declared, so a built distribution would not carry it")
+
+    package = json.loads((REPO_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    assert package.get("license") == "Apache-2.0", (
+        f"frontend/package.json declares {package.get('license')!r}, not Apache-2.0")
 
 
 def test_licensing_decision_document_exists() -> None:

@@ -1,13 +1,31 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77.0.1 is the first setuptools release that accepts PEP 639 license metadata. The floor was 68
+# until the license was added, and 68 rejects the new form outright:
+#
+#   configuration error: `project.license` must be valid exactly by one definition
+#
+# Both candidates were tested by installing them deliberately and building with --no-isolation;
+# 76.1.0 rejects and 77.0.1 builds. Isolation is what hid this: with it, `setuptools>=68` resolves to
+# the newest release, the floor is never exercised, and an unbuildable floor looks fine.
+requires = ["setuptools>=77.0.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "autofund"
-version = "0.5.0"
-description = "Deterministic paper financial and risk core"
+# Kept in step with src/autofund/version.py, which is what the product reports at runtime. It read
+# 0.5.0 here while the runtime reported 0.3.0: two declarations of the same fact that disagreed,
+# and a built distribution would have been labelled differently from the running product. A test
+# now asserts they match.
+version = "0.3.0"
+description = "Evidence-driven quantitative research and execution platform"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = ["httpx>=0.28,<0.29", "websockets>=16,<18", "fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
+
+# No [project.urls] section. A repository URL is optional in PEP 621, and a placeholder such as
+# https://github.com/OWNER/autofund would publish a link that does not resolve. It will be added
+# when the repository has a real URL.
 
 [project.scripts]
 autofund = "autofund.f4_cli:main"

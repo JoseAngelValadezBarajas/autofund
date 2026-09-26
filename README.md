@@ -7,8 +7,13 @@ out-of-sample validation, forward capture, economic validation, risk validation 
 before a human is even offered the option to authorize a session. Most hypotheses do not survive,
 and the system's answer is then `NO_TRADE`.
 
-This repository is public and source-available. **No license has been selected yet**, so it is not
-yet open source in the legal sense — see [Licensing](#licensing).
+AutoFund is free and open source software, licensed under the
+[Apache License 2.0](LICENSE). You may use, modify, redistribute and sell it, provided you keep the
+copyright notice and license text and state what you changed. The license also grants an explicit
+patent license. It comes with no warranty — which matters more here than in most projects, because
+this is experimental software that can place real orders.
+
+**It is not affiliated with, endorsed by, or partnered with any exchange.**
 
 ```text
 FRESH CLONE → INSTALL → DEMO MODE → RESEARCH CONTROL CENTER
@@ -20,8 +25,8 @@ FRESH CLONE → INSTALL → DEMO MODE → RESEARCH CONTROL CENTER
 
 ## Quick start
 
-Requires **Python 3.11+** and **Node.js 20+**. No exchange account, no credentials and no network
-access to any exchange.
+Requires **Python 3.12+** and **Node.js 20+**. No exchange account, no credentials and no network
+access to any exchange. The build needs `setuptools>=77.0.1`, which `pip` fetches automatically.
 
 ### Windows (PowerShell)
 
@@ -266,13 +271,27 @@ schemas/         Public data contracts
 
 ## Licensing
 
-**No license has been selected.** This repository is therefore *source-available*, not open source:
-without a license, the default is that all rights are reserved, and others have no legal permission
-to use, modify or redistribute it.
+**Apache License 2.0** — see [`LICENSE`](LICENSE).
 
-[`docs/licensing-decision.md`](docs/licensing-decision.md) compares MIT and Apache-2.0 for this
-project and sets out what each implies. The choice belongs to the project owner, and it is the one
-remaining decision before this repository can be described as open source.
+| | |
+|---|---|
+| Use, modify, redistribute, sell | permitted |
+| Must retain the copyright notice and license text | required |
+| Must state what was changed | required |
+| Patent license | granted, with a retaliation clause |
+| Trademark rights | explicitly not granted |
+| Warranty | none — provided "AS IS" |
+
+The rationale for choosing Apache-2.0 over MIT — chiefly the explicit patent grant and the
+statement that no trademark rights are granted — is recorded in
+[`docs/licensing-decision.md`](docs/licensing-decision.md).
+
+Copyright 2026 AutoFund contributors.
+
+**Trademarks.** AutoFund is not affiliated with, endorsed by, or partnered with Bitso, Binance,
+Kraken, Coinbase or any other venue. Exchange names appear because the software talks to their
+public APIs; that is interoperability, not endorsement, and section 6 of the license grants no
+right to use their names.
 
 ---
 

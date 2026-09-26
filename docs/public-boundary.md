@@ -15,7 +15,9 @@ not to commit it" stops working the first time someone runs `git add -A`.
 | `PUBLIC_CODE` | **Yes** | Source, tests, certification scripts, CI configuration |
 | `PUBLIC_SCHEMAS` | **Yes** | Data contracts under `schemas/` |
 | `PUBLIC_DOCUMENTATION` | **Yes** | `README.md`, `docs/`, `CONTRIBUTING.md`, `SECURITY.md` |
+| `PUBLIC_LICENSE` | **Yes** | `LICENSE` — Apache License 2.0 |
 | `PUBLIC_CONFIG_EXAMPLES` | **Yes** | `.env.example` (placeholder values only) |
+
 | `PUBLIC_SYNTHETIC_DATA` | **Yes** | Generated demo dataset, synthetic fixtures |
 | `PUBLIC_SAMPLE_ARTIFACTS` | **Yes** | Small sanitized examples under `examples/` |
 | `PUBLIC_SCREENSHOTS` | **Yes** | Visual baselines containing demo or sanitized state |
