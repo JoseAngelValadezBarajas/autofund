@@ -556,6 +556,37 @@ def test_documented_node_version_satisfies_the_frontend_toolchain() -> None:
             f"{'.'.join(map(str, required))}")
 
 
+def test_the_e2e_config_does_not_hardcode_a_windows_path() -> None:
+    """The Playwright fixture servers must start on any platform.
+
+    Every `webServer.command` began with `.venv\\Scripts\\autofund`, the Windows layout. Linux has no
+    such path, so Playwright could not start its servers and the end-to-end job failed with exit
+    code 127 before running a single test - the suite had only ever run on Windows.
+
+    A virtual environment puts console scripts in `Scripts` on Windows and `bin` elsewhere, so the
+    check is that the config derives the path rather than spelling out either one.
+    """
+    config = (REPO_ROOT / "frontend" / "playwright.config.ts").read_text(encoding="utf-8")
+
+    # Comments are stripped before checking. The config's own docstring necessarily quotes the
+    # Windows path it used to hardcode, so scanning the raw text flags the explanation as the
+    # defect - the same self-reference trap the licence and leak checks hit.
+    code = "\n".join(line for line in config.splitlines()
+                     if not line.strip().startswith(("*", "//", "/*")))
+
+    windows_literal = ".venv" + chr(92) + "Scripts"
+    assert windows_literal not in code, (
+        "playwright.config.ts hardcodes the Windows virtualenv path, which does not exist on Linux")
+    assert "process.platform" in code, (
+        "playwright.config.ts does not select the interpreter path by platform")
+    # `path.join` rather than a separator literal, so the result is native on both platforms.
+    assert "node:path" in code and "join(" in code, (
+        "playwright.config.ts should build the path with path.join so the separator is native")
+    # Both virtualenv layouts must be named, or one platform cannot work.
+    assert "'bin'" in code, "the POSIX virtualenv directory is not referenced"
+    assert "'Scripts'" in code, "the Windows virtualenv directory is not referenced"
+
+
 def test_metadata_declares_the_same_license_as_the_license_file() -> None:
     """Package metadata and the license file disagreeing is a real defect for a consumer."""
     import tomllib
