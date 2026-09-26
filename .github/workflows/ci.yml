@@ -50,7 +50,12 @@ jobs:
       - name: ruff
         run: python -m ruff check src/ tests/ scripts/
       - name: mypy --strict
-        run: python -m mypy --strict src/autofund
+        # Both platforms explicitly. The single-writer journal lock branches on `os.name` and only
+        # one of `msvcrt`/`fcntl` exists per platform, so checking only the runner's platform leaves
+        # the other branch unverified - which is how a Windows-clean tree failed CI on Linux.
+        run: |
+          python -m mypy --strict --platform linux src/autofund
+          python -m mypy --strict --platform win32 src/autofund
 
   frontend:
     name: Frontend (tsc, vitest, build)

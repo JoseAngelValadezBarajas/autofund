@@ -32,11 +32,16 @@ class ExecutionJournal:
                     self._lockfile.write(b"0")
                     self._lockfile.flush()
                 self._lockfile.seek(0)
-                msvcrt.locking(self._lockfile.fileno(), msvcrt.LK_NBLCK, 1)
+                # `msvcrt` exists only on Windows and `fcntl` only on POSIX, but mypy checks the
+                # union of both branches, so each line is flagged on the platform that lacks its
+                # module. A bare `attr-defined` ignore then becomes an "unused ignore" error on the
+                # other platform under --strict, which is how this passed locally on Windows and
+                # failed in CI on Linux. Both codes are therefore required, on both lines.
+                msvcrt.locking(self._lockfile.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined, unused-ignore]
             else:
                 import fcntl
 
-                fcntl.flock(self._lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                fcntl.flock(self._lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined, unused-ignore]
         except OSError:
             self._lockfile.close()
             raise ExchangeInvariantError("execution journal already in use") from None

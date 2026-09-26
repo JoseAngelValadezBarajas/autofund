@@ -123,11 +123,14 @@ class ShadowCapture:
                     self._lock.write(b"0")
                     self._lock.flush()
                 self._lock.seek(0)
-                msvcrt.locking(self._lock.fileno(), msvcrt.LK_NBLCK, 1)
+                # See the note in exchanges/bitso/journal.py: both `attr-defined` (for the platform
+                # without this module) and `unused-ignore` (for the platform with it) are required,
+                # because mypy analyzes both branches of the platform test.
+                msvcrt.locking(self._lock.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined, unused-ignore]
             else:
                 import fcntl
 
-                fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined, unused-ignore]
         except OSError:
             self._lock.close()
             raise MarketDataInvalid("shadow capture already in use") from None
