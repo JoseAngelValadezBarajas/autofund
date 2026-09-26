@@ -184,6 +184,54 @@ export interface AlphaResearchView {
   capital_limits_changed:boolean;
 }
 
+export interface VenueProfileView {
+  venue:string; accessibility:string;
+  spot_api:boolean|null; public_market_data_api:boolean|null;
+  authenticated_trading_api:boolean|null;
+  supports_market_orders:boolean|null; supports_limit:boolean|null;
+  supports_post_only:boolean|null; supports_client_order_id:boolean|null;
+  order_status_api:boolean|null; fills_api:boolean|null; open_orders_api:boolean|null;
+  cancel_api:boolean|null; websocket_support:boolean|null;
+  order_book_api:boolean|null; trade_tape_api:boolean|null;
+  minimum_order_quote:string|null; minimum_order_currency:string|null;
+  mxn_quote_pairs:boolean|null; mxn_pair_symbols:string[];
+  fee_tier_requirements:string; fee_currency_semantics:string; rate_limits:string;
+  liquidity_evidence:string; recovery_feasibility:string; migration_effort:string;
+  notes:string;
+}
+
+export interface VenueSourceView {
+  venue:string; maker_rate:string|null; taker_rate:string|null; basis:string;
+  source:string; retrieved_at:string; rates_known:boolean; notes:string;
+}
+
+export interface VenueEconomicsView {
+  question:string; is_a_decision_milestone:boolean; builds_a_strategy:boolean;
+  builds_a_venue_adapter:boolean;
+  frozen_alpha_label:string; frozen_alpha_fingerprint:string;
+  frozen_alpha_movement_bps:string; frozen_alpha_retuned_for_venue_economics:boolean;
+  capture_scenarios:string[]; execution_modes:string[]; verdicts:string[];
+  early_fail_classification:string; feasibility_classifications:string[];
+  venue_count:number; venues:VenueProfileView[];
+  referenced_venue_data:{version:string; retrieved_at:string;
+    sources:VenueSourceView[]; account_rate_unknown_venues:string[]};
+  established_fee_floors_bps:Record<string,string>;
+  fee_conventions_available:string[]; fee_convention_note:string;
+  historical_friction_bps:string;
+  authorized_capital_mxn:string; max_deployment_mxn:string; max_single_order_mxn:string;
+  minimum_order_compatibility_values:string[];
+  capital_limits_increased_to_qualify_a_venue:boolean;
+  migration_effort_levels:string[]; migration_implemented:boolean;
+  credentials_requested:boolean; accounts_opened:boolean; transfers_designed:boolean;
+  transfer_arbitrage_designed:boolean; is_arbitrage_claim:boolean;
+  cross_venue_same_quote_currency_only:boolean; reference_data_adapter_built:boolean;
+  gate_can_override_economic_guard:boolean; gate_can_override_risk_engine:boolean;
+  gate_can_override_risk_policy:boolean;
+  verdict:string|null; verdict_pending_frozen_experiment:boolean;
+  economic_guard_changed:boolean; risk_engine_changed:boolean;
+  drawdown_policy_changed:boolean; capital_limits_changed:boolean;
+}
+
 export interface StrategyResearchView {
   research_version:string;
   promotion:string;
@@ -211,6 +259,7 @@ export interface StrategyResearchView {
   microstructure_capture?:MicrostructureCaptureView;
   asymmetry_research?:AsymmetryResearchView;
   alpha_research?:AlphaResearchView;
+  venue_economics?:VenueEconomicsView;
 }
 
 /** Shadow rows carry whichever fields the pipeline produced; read them defensively. */
@@ -790,6 +839,133 @@ function AlphaPanel({research}:{research:StrategyResearchView}){
   </>;
 }
 
+/**
+ * Venue economics and product-thesis feasibility (MVP 0.2.7). A decision milestone: it asks
+ * whether any realistically available retail venue could collect the validated signal, and it
+ * builds no strategy, no adapter and no credential path.
+ *
+ * Two things are shown prominently because they are the ones a reader could misread. First, the
+ * frozen signal is stated with its fingerprint and an explicit "not retuned" flag, so the venue
+ * arithmetic cannot be mistaken for a re-derived signal. Second, an unknown rate is rendered as
+ * UNKNOWN rather than omitted, because a venue whose fees need authentication is a genuine gap
+ * in the evidence and hiding it would make the comparison look complete when it is not.
+ */
+function VenuePanel({research}:{research:StrategyResearchView}){
+  const venue=research.venue_economics;
+  if(!venue)return null;
+  const yes=(value:boolean|null)=>value===null?'UNKNOWN':(value?'YES':'NO');
+  return <>
+    <h3>Venue economics and product thesis</h3>
+    <p>{venue.question}. The validated signal is priced against each venue's published costs as a
+      requirement, never as permission to trade. No strategy, order adapter or credential path is
+      built here, and a venue whose fees cannot be seen without signing in is reported as unknown
+      rather than estimated.</p>
+    <div className="table"><table><tbody>
+      <tr><th>Decision milestone</th>
+        <td data-venue-decision={venue.is_a_decision_milestone}>
+          {venue.is_a_decision_milestone?'YES':'NO'}</td></tr>
+      <tr><th>Builds a strategy</th>
+        <td data-venue-builds-strategy={venue.builds_a_strategy}>
+          {venue.builds_a_strategy?'YES':'NO'}</td></tr>
+      <tr><th>Builds a venue adapter</th>
+        <td data-venue-builds-adapter={venue.builds_a_venue_adapter}>
+          {venue.builds_a_venue_adapter?'YES':'NO'}</td></tr>
+      <tr><th>Frozen signal</th>
+        <td data-venue-frozen-label={venue.frozen_alpha_label}>
+          {venue.frozen_alpha_label}</td></tr>
+      <tr><th>Frozen fingerprint</th>
+        <td><code data-venue-frozen-fingerprint={venue.frozen_alpha_fingerprint}>
+          {venue.frozen_alpha_fingerprint.slice(0,32)}…</code></td></tr>
+      <tr><th>Validated movement</th>
+        <td data-venue-movement={venue.frozen_alpha_movement_bps}>
+          {text(Number(venue.frozen_alpha_movement_bps).toFixed(4))} bps</td></tr>
+      <tr><th>Signal retuned for venue economics</th>
+        <td data-venue-retuned={venue.frozen_alpha_retuned_for_venue_economics}>
+          {venue.frozen_alpha_retuned_for_venue_economics?'YES':'NO'}</td></tr>
+      <tr><th>Capture scenarios</th>
+        <td data-venue-scenarios={venue.capture_scenarios.join(',')}>
+          {venue.capture_scenarios.join(', ')}</td></tr>
+      <tr><th>Execution modes priced</th>
+        <td>{venue.execution_modes.join(', ')}</td></tr>
+      <tr><th>Early-fail classification</th>
+        <td data-venue-early-fail={venue.early_fail_classification}>
+          {venue.early_fail_classification}</td></tr>
+      <tr><th>Venues evaluated</th>
+        <td data-venue-count={venue.venue_count}>{venue.venue_count}</td></tr>
+      <tr><th>Historical friction</th>
+        <td data-venue-historical-friction={venue.historical_friction_bps}>
+          {text(Number(venue.historical_friction_bps).toFixed(2))} bps</td></tr>
+      <tr><th>Capital limits</th>
+        <td data-venue-capital={venue.max_single_order_mxn}>
+          {venue.authorized_capital_mxn} authorized · {venue.max_deployment_mxn} deployment ·{' '}
+          {venue.max_single_order_mxn} single order</td></tr>
+      <tr><th>Limits raised to qualify a venue</th>
+        <td data-venue-limits-raised={venue.capital_limits_increased_to_qualify_a_venue}>
+          {venue.capital_limits_increased_to_qualify_a_venue?'YES':'NO'}</td></tr>
+      <tr><th>Credentials requested</th>
+        <td data-venue-credentials={venue.credentials_requested}>
+          {venue.credentials_requested?'YES':'NO'}</td></tr>
+      <tr><th>Accounts opened</th>
+        <td data-venue-accounts={venue.accounts_opened}>
+          {venue.accounts_opened?'YES':'NO'}</td></tr>
+      <tr><th>Transfers designed</th>
+        <td data-venue-transfers={venue.transfers_designed}>
+          {venue.transfers_designed?'YES':'NO'}</td></tr>
+      <tr><th>Called arbitrage</th>
+        <td data-venue-arbitrage={venue.is_arbitrage_claim}>
+          {venue.is_arbitrage_claim?'YES':'NO'}</td></tr>
+      <tr><th>Cross-venue compares same quote only</th>
+        <td data-venue-same-quote={venue.cross_venue_same_quote_currency_only}>
+          {venue.cross_venue_same_quote_currency_only?'YES':'NO'}</td></tr>
+      <tr><th>Can override EconomicEdgeGuard</th>
+        <td data-venue-overrides-economic={venue.gate_can_override_economic_guard}>
+          {venue.gate_can_override_economic_guard?'YES':'NO'}</td></tr>
+      <tr><th>Can override RiskEngine</th>
+        <td data-venue-overrides-risk={venue.gate_can_override_risk_engine}>
+          {venue.gate_can_override_risk_engine?'YES':'NO'}</td></tr>
+      <tr><th>Can widen risk policy</th>
+        <td data-venue-overrides-policy={venue.gate_can_override_risk_policy}>
+          {venue.gate_can_override_risk_policy?'YES':'NO'}</td></tr>
+      <tr><th>Verdict</th>
+        <td data-venue-verdict-pending={venue.verdict_pending_frozen_experiment}>
+          {venue.verdict??'PENDING FROZEN EXPERIMENT'}</td></tr>
+    </tbody></table></div>
+
+    <h4>Candidate venues</h4>
+    <div className="table"><table>
+      <thead><tr><th>Venue</th><th>Maker</th><th>Taker</th><th>Fee basis</th>
+        <th>MXN pairs</th><th>Minimum order</th><th>Migration</th></tr></thead>
+      <tbody>{venue.referenced_venue_data.sources.map(source=><tr
+        key={source.venue} data-venue-source={source.venue}
+        data-venue-basis={source.basis}>
+        <td>{source.venue}</td>
+        <td>{source.maker_rate===null?'UNKNOWN':`${source.maker_rate}%`}</td>
+        <td>{source.taker_rate===null?'UNKNOWN':`${source.taker_rate}%`}</td>
+        <td>{source.basis}</td>
+        <td>{(()=>{const p=venue.venues.find(v=>v.venue===source.venue);
+          return p?yes(p.mxn_quote_pairs):'UNKNOWN';})()}</td>
+        <td>{(()=>{const p=venue.venues.find(v=>v.venue===source.venue);
+          return p&&p.minimum_order_quote?`${p.minimum_order_quote} ${p.minimum_order_currency??''}`
+            :'UNKNOWN';})()}</td>
+        <td>{(()=>{const p=venue.venues.find(v=>v.venue===source.venue);
+          return p?p.migration_effort:'UNKNOWN';})()}</td>
+      </tr>)}</tbody></table></div>
+
+    <h4>Account-rate-unknown venues</h4>
+    <p className="policy" data-venue-unknown-rates={
+      venue.referenced_venue_data.account_rate_unknown_venues.join(',')||'NONE'}>
+      {venue.referenced_venue_data.account_rate_unknown_venues.length
+        ? `Not priceable without credentials this milestone declines to request: ${
+            venue.referenced_venue_data.account_rate_unknown_venues.join(', ')}.`
+        : 'No venue in the set required authentication to price.'}</p>
+
+    <p className="policy">Fee conventions in use: {venue.fee_conventions_available.join(', ')}.
+      {' '}{venue.fee_convention_note}</p>
+    <p className="policy">Venue data {venue.referenced_venue_data.version}, retrieved
+      {' '}{venue.referenced_venue_data.retrieved_at} from current official sources.</p>
+  </>;
+}
+
 export function StrategyResearchPage({research}:
   {research:StrategyResearchView|undefined|null}){
   if(!research)return <article>
@@ -828,6 +1004,7 @@ export function StrategyResearchPage({research}:
     <MicrostructurePanel research={research}/>
     <AsymmetryPanel research={research}/>
     <AlphaPanel research={research}/>
+    <VenuePanel research={research}/>
     <ShadowTable rows={research.shadow}/>
     <MarketTable research={research}/>
 

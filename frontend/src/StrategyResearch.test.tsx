@@ -4,7 +4,7 @@ import {MvpApp} from './MvpApp';
 
 class Events {addEventListener(){} close(){}}
 
-const stopped:any={product_version:'AutoFund MVP 0.2.6',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+const stopped:any={product_version:'AutoFund MVP 0.2.7',demo_mode:true,app_state:'STOPPED',auto_execution:false,
  session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
  risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
  realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'mean-reversion-safe',strategy_id:'mean_reversion',
@@ -208,7 +208,95 @@ const research:any={research_version:'autofund.production-market-selector.v1',
   gate_can_override_economic_guard:false,gate_can_override_risk_engine:false,
   gate_can_override_risk_policy:false,new_strategy_implemented:false,
   maker_authorised:false,verdict:null,verdict_pending_frozen_experiment:true,
-  drawdown_policy_changed:false,risk_engine_changed:false,capital_limits_changed:false}};
+  drawdown_policy_changed:false,risk_engine_changed:false,capital_limits_changed:false},
+ venue_economics:{question:'is the product thesis economically feasible anywhere',
+  is_a_decision_milestone:true,builds_a_strategy:false,builds_a_venue_adapter:false,
+  frozen_alpha_label:'VALIDATED_INFORMATION_SIGNAL_V1',
+  frozen_alpha_fingerprint:'fae4faa85ef648acb5e831cb6bc3fe242d8a1723cc3c474262a886a4600ab3aa',
+  frozen_alpha_movement_bps:'2.513590292581896613688157726',
+  frozen_alpha_retuned_for_venue_economics:false,
+  capture_scenarios:['100%','75%','50%','25%'],
+  execution_modes:['TAKER_TAKER','MAKER_TAKER','MAKER_MAKER'],
+  verdicts:['CLEARLY_NOT_ECONOMIC','THEORETICALLY_POSSIBLE_ONLY_UNDER_PASSIVE_EXECUTION',
+   'POTENTIALLY_ECONOMIC','INSUFFICIENT_COST_EVIDENCE'],
+  early_fail_classification:'STRUCTURALLY_UNTRADEABLE_FOR_THIS_ALPHA',
+  feasibility_classifications:['CURRENT_VENUE_VIABLE','LOWER_COST_VENUE_REQUIRED',
+   'NEW_ALPHA_SOURCE_REQUIRED','MICROSTRUCTURE_EVIDENCE_PENDING',
+   'ACTIVE_TRADING_THESIS_NOT_SUPPORTED'],
+  venue_count:4,
+  venues:[
+   {venue:'Bitso',accessibility:'VERIFIED',spot_api:true,public_market_data_api:true,
+    authenticated_trading_api:true,supports_market_orders:true,supports_limit:true,
+    supports_post_only:true,supports_client_order_id:true,order_status_api:true,
+    fills_api:true,open_orders_api:true,cancel_api:true,websocket_support:true,
+    order_book_api:true,trade_tape_api:true,minimum_order_quote:'10',
+    minimum_order_currency:'MXN',mxn_quote_pairs:true,
+    mxn_pair_symbols:['btc_mxn','eth_mxn'],fee_tier_requirements:'volume-tiered',
+    fee_currency_semantics:'BUY_FEE_IN_BASE;SELL_FEE_IN_QUOTE',rate_limits:'documented',
+    liquidity_evidence:'12 MXN books',recovery_feasibility:'origin_id supported',
+    migration_effort:'LOW',notes:'incumbent'},
+   {venue:'Binance',accessibility:'VERIFIED',spot_api:true,public_market_data_api:true,
+    authenticated_trading_api:true,supports_market_orders:true,supports_limit:true,
+    supports_post_only:true,supports_client_order_id:true,order_status_api:true,
+    fills_api:true,open_orders_api:true,cancel_api:true,websocket_support:true,
+    order_book_api:true,trade_tape_api:true,minimum_order_quote:'150',
+    minimum_order_currency:'MXN',mxn_quote_pairs:true,mxn_pair_symbols:['BTCMXN'],
+    fee_tier_requirements:'Regular User',fee_currency_semantics:'received asset',
+    rate_limits:'documented',liquidity_evidence:'deep on BTC',
+    recovery_feasibility:'clientOrderId',migration_effort:'HIGH',
+    notes:'minNotional 150 MXN'},
+   {venue:'Kraken',accessibility:'VERIFIED',spot_api:true,public_market_data_api:true,
+    authenticated_trading_api:true,supports_market_orders:true,supports_limit:true,
+    supports_post_only:true,supports_client_order_id:true,order_status_api:true,
+    fills_api:true,open_orders_api:true,cancel_api:true,websocket_support:true,
+    order_book_api:true,trade_tape_api:true,minimum_order_quote:'0.5',
+    minimum_order_currency:'USD',mxn_quote_pairs:false,mxn_pair_symbols:[],
+    fee_tier_requirements:'Tier 1 entry',fee_currency_semantics:'quote volume',
+    rate_limits:'documented',liquidity_evidence:'deep USD only',
+    recovery_feasibility:'documented',migration_effort:'HIGH',
+    notes:'no MXN pair'},
+   {venue:'Coinbase Advanced',accessibility:'VERIFIED',spot_api:true,
+    public_market_data_api:true,authenticated_trading_api:true,
+    supports_market_orders:true,supports_limit:true,supports_post_only:true,
+    supports_client_order_id:true,order_status_api:true,fills_api:true,
+    open_orders_api:true,cancel_api:true,websocket_support:true,order_book_api:true,
+    trade_tape_api:true,minimum_order_quote:null,minimum_order_currency:null,
+    mxn_quote_pairs:false,mxn_pair_symbols:[],fee_tier_requirements:'requires sign-in',
+    fee_currency_semantics:'not established',rate_limits:'not established',
+    liquidity_evidence:'no MXN product',recovery_feasibility:'unreachable in MXN',
+    migration_effort:'HIGH',notes:'fees unknown'}],
+  referenced_venue_data:{version:'autofund.venue-data.v1',retrieved_at:'2026-09-25',
+   sources:[
+    {venue:'Bitso',maker_rate:'0.6',taker_rate:'0.78',basis:'ACCOUNT_CONFIRMED',
+     source:'docs.bitso.com',retrieved_at:'2026-09-25',rates_known:true,notes:'account'},
+    {venue:'Binance',maker_rate:'0.1',taker_rate:'0.1',basis:'PUBLISHED_BASELINE',
+     source:'binance.com/en/fee/schedule',retrieved_at:'2026-09-25',rates_known:true,
+     notes:'Regular User'},
+    {venue:'Kraken',maker_rate:'0.4',taker_rate:'0.8',basis:'PUBLISHED_BASELINE',
+     source:'kraken.com/features/fee-schedule',retrieved_at:'2026-09-25',rates_known:true,
+     notes:'Tier 1'},
+    {venue:'Coinbase Advanced',maker_rate:null,taker_rate:null,basis:'ACCOUNT_RATE_UNKNOWN',
+     source:'help.coinbase.com',retrieved_at:'2026-09-25',rates_known:false,
+     notes:'requires sign-in'}],
+   account_rate_unknown_venues:['Coinbase Advanced']},
+  established_fee_floors_bps:{TAKER_TAKER:'157.8443689034903612824254100',
+   MAKER_TAKER:'139.4498821187556704873465700',
+   MAKER_MAKER:'121.0887052698484670599047000'},
+  fee_conventions_available:['GEOMETRIC_COMPOUNDED','DOUBLED_RATE'],
+  fee_convention_note:'two conventions differ by about 1.8 bps',
+  historical_friction_bps:'173.0000',authorized_capital_mxn:'50',
+  max_deployment_mxn:'25',max_single_order_mxn:'11',
+  minimum_order_compatibility_values:['COMPATIBLE_WITH_CURRENT_EXPERIMENT',
+   'NOT_COMPATIBLE_WITH_CURRENT_EXPERIMENT','COMPATIBILITY_UNKNOWN'],
+  capital_limits_increased_to_qualify_a_venue:false,
+  migration_effort_levels:['LOW','MEDIUM','HIGH'],migration_implemented:false,
+  credentials_requested:false,accounts_opened:false,transfers_designed:false,
+  transfer_arbitrage_designed:false,is_arbitrage_claim:false,
+  cross_venue_same_quote_currency_only:true,reference_data_adapter_built:false,
+  gate_can_override_economic_guard:false,gate_can_override_risk_engine:false,
+  gate_can_override_risk_policy:false,verdict:null,verdict_pending_frozen_experiment:true,
+  economic_guard_changed:false,risk_engine_changed:false,drawdown_policy_changed:false,
+  capital_limits_changed:false}};
 
 beforeEach(()=>{vi.stubGlobal('EventSource',Events);vi.stubGlobal('fetch',vi.fn().mockResolvedValue({json:async()=>({control_token:'token'})}))});
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
@@ -605,4 +693,98 @@ test('the pipeline is declared able to report an absence of alpha',()=>{
  // must be a property of the contract rather than a hope about the data.
  expect(document.querySelector('[data-alpha-may-report-absence="true"]')).toBeTruthy();
  expect(document.querySelector('[data-alpha-no-future-structure="true"]')).toBeTruthy();
+});
+
+test('venue economics is shown as a decision milestone that builds nothing',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Venue economics and product thesis')).toBeTruthy();
+ expect(document.querySelector('[data-venue-decision="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-builds-strategy="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-builds-adapter="false"]')).toBeTruthy();
+});
+
+test('the frozen signal is stated with its fingerprint and is not retuned',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ // The venue arithmetic must not be readable as a re-derived signal.
+ expect(document.querySelector('[data-venue-frozen-label="VALIDATED_INFORMATION_SIGNAL_V1"]'))
+   .toBeTruthy();
+ expect(document.querySelector('[data-venue-retuned="false"]')).toBeTruthy();
+ const fingerprint=document.querySelector('[data-venue-frozen-fingerprint]');
+ expect(fingerprint?.textContent).toContain('fae4faa85ef648ac');
+});
+
+test('an unknown venue rate is rendered as unknown rather than omitted',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ // Hiding the gap would make the comparison look complete when it is not.
+ const unknown=document.querySelector('[data-venue-unknown-rates]');
+ expect(unknown?.textContent).toContain('Coinbase Advanced');
+ const coinbase=document.querySelector('[data-venue-source="Coinbase Advanced"]');
+ expect(coinbase?.getAttribute('data-venue-basis')).toBe('ACCOUNT_RATE_UNKNOWN');
+ expect(coinbase?.textContent).toContain('UNKNOWN');
+});
+
+test('the venue table shows the cheapest published rate and its MXN reachability',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const rows=document.querySelectorAll('[data-venue-source]');
+ expect(rows.length).toBe(4);
+ const binance=document.querySelector('[data-venue-source="Binance"]');
+ expect(binance?.getAttribute('data-venue-basis')).toBe('PUBLISHED_BASELINE');
+ expect(binance?.textContent).toContain('0.1%');
+ // Bitso is the baseline and must appear.
+ expect(document.querySelector('[data-venue-source="Bitso"]')).toBeTruthy();
+});
+
+test('capital limits are unchanged and were not raised to qualify a venue',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const capital=document.querySelector('[data-venue-capital="11"]');
+ expect(capital).toBeTruthy();
+ expect(capital?.textContent).toContain('50');
+ expect(capital?.textContent).toContain('25');
+ expect(document.querySelector('[data-venue-limits-raised="false"]')).toBeTruthy();
+});
+
+test('no credentials were requested and no account or transfer was touched',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-venue-credentials="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-accounts="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-transfers="false"]')).toBeTruthy();
+});
+
+test('a price difference is never presented as arbitrage',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-venue-arbitrage="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-same-quote="true"]')).toBeTruthy();
+});
+
+test('the venue model cannot override the economic guard, risk engine or policy',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-venue-overrides-economic="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-overrides-risk="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-overrides-policy="false"]')).toBeTruthy();
+});
+
+test('the venue verdict is withheld until the frozen experiment runs',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const pending=document.querySelector('[data-venue-verdict-pending="true"]');
+ expect(pending).toBeTruthy();
+ // Scoped to the cell: several panels withhold a verdict, so a page-wide match is ambiguous.
+ expect(pending?.textContent).toContain('PENDING FROZEN EXPERIMENT');
+});
+
+test('the early-fail classification and capture ladder are visible',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector(
+   '[data-venue-early-fail="STRUCTURALLY_UNTRADEABLE_FOR_THIS_ALPHA"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-scenarios="100%,75%,50%,25%"]')).toBeTruthy();
+ expect(document.querySelector('[data-venue-historical-friction="173.0000"]')).toBeTruthy();
 });

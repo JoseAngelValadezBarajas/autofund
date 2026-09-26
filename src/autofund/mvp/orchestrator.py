@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2.6"
+PRODUCT_VERSION = "AutoFund MVP 0.2.7"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1410,6 +1410,40 @@ class AutoFundOrchestrator:
         )
         from .profiles import PROMOTION, classify_market
         from .research import SELECTOR_CONTRACT_VERSION
+        from .venue_data import (
+            ESTABLISHED_FEE_FLOORS_BPS,
+            VENUE_DATA_VERSION,
+            venue_profiles,
+            venue_schedules,
+        )
+        from .venue_data import (
+            RETRIEVED_AT as VENUE_DATA_RETRIEVED_AT,
+        )
+        from .venue_economics import (
+            ACCOUNT_RATE_UNKNOWN,
+            AUTHORIZED_CAPITAL_MXN,
+            CAPTURE_SCENARIOS,
+            CLEARLY_NOT_ECONOMIC,
+            COMPATIBILITY_UNKNOWN,
+            COMPATIBLE_WITH_CURRENT_EXPERIMENT,
+            EFFORT_HIGH,
+            EFFORT_LOW,
+            EFFORT_MEDIUM,
+            EXECUTION_MODES,
+            FEE_CONVENTIONS,
+            FROZEN_ALPHA_FINGERPRINT,
+            FROZEN_ALPHA_MOVEMENT_BPS,
+            INSUFFICIENT_COST_EVIDENCE,
+            MAX_DEPLOYMENT_MXN,
+            MAX_SINGLE_ORDER_MXN,
+            NOT_COMPATIBLE_WITH_CURRENT_EXPERIMENT,
+            POTENTIALLY_ECONOMIC,
+            STRUCTURALLY_UNTRADEABLE_FOR_THIS_ALPHA,
+            THEORETICALLY_POSSIBLE_ONLY_UNDER_PASSIVE_EXECUTION,
+            THESIS_CLASSIFICATIONS,
+            VALIDATED_INFORMATION_SIGNAL_V1,
+            historical_friction_bps,
+        )
         from .viability import minimum_viable_gross_edge_bps
 
         # Profiles that declare an invalidation price and a holding limit. Read from each
@@ -1663,6 +1697,72 @@ class AutoFundOrchestrator:
                 "verdict_pending_frozen_experiment": True,
                 "drawdown_policy_changed": False,
                 "risk_engine_changed": False,
+                "capital_limits_changed": False,
+            },
+            # Venue economics and product-thesis feasibility (MVP 0.2.7). A DECISION milestone:
+            # it reports whether any realistically available retail venue could collect the
+            # validated signal, and it deliberately builds no strategy, adapter or credential
+            # path. The cost arithmetic is stated as a requirement rather than a permission, so a
+            # reader cannot mistake a budget for an authorisation.
+            "venue_economics": {
+                "question": ("is AutoFund's product thesis economically feasible under any "
+                             "realistic execution environment available to a small retail "
+                             "spot-trading system"),
+                "is_a_decision_milestone": True,
+                "builds_a_strategy": False,
+                "builds_a_venue_adapter": False,
+                "frozen_alpha_label": VALIDATED_INFORMATION_SIGNAL_V1,
+                "frozen_alpha_fingerprint": FROZEN_ALPHA_FINGERPRINT,
+                "frozen_alpha_movement_bps": str(FROZEN_ALPHA_MOVEMENT_BPS),
+                "frozen_alpha_retuned_for_venue_economics": False,
+                "capture_scenarios": [label for label, _ in CAPTURE_SCENARIOS],
+                "execution_modes": list(EXECUTION_MODES),
+                "verdicts": [CLEARLY_NOT_ECONOMIC,
+                             THEORETICALLY_POSSIBLE_ONLY_UNDER_PASSIVE_EXECUTION,
+                             POTENTIALLY_ECONOMIC, INSUFFICIENT_COST_EVIDENCE],
+                "early_fail_classification": STRUCTURALLY_UNTRADEABLE_FOR_THIS_ALPHA,
+                "feasibility_classifications": list(THESIS_CLASSIFICATIONS),
+                "venue_count": len(venue_profiles()),
+                "venues": [profile.public() for profile in venue_profiles()],
+                "referenced_venue_data": {
+                    "version": VENUE_DATA_VERSION,
+                    "retrieved_at": VENUE_DATA_RETRIEVED_AT,
+                    "sources": [schedule.public() for schedule in venue_schedules()],
+                    "account_rate_unknown_venues": [
+                        schedule.venue for schedule in venue_schedules()
+                        if schedule.basis == ACCOUNT_RATE_UNKNOWN],
+                },
+                "established_fee_floors_bps": dict(ESTABLISHED_FEE_FLOORS_BPS),
+                "fee_conventions_available": list(FEE_CONVENTIONS),
+                "fee_convention_note": (
+                    "the project holds two fee-doubling conventions that differ by about 1.8 bps; "
+                    "the fee-only floors use the compounding form and the historical 173 bps "
+                    "all-in uses the doubled form, and both are reproduced exactly"),
+                "historical_friction_bps": str(historical_friction_bps()),
+                "authorized_capital_mxn": str(AUTHORIZED_CAPITAL_MXN),
+                "max_deployment_mxn": str(MAX_DEPLOYMENT_MXN),
+                "max_single_order_mxn": str(MAX_SINGLE_ORDER_MXN),
+                "minimum_order_compatibility_values": [
+                    COMPATIBLE_WITH_CURRENT_EXPERIMENT,
+                    NOT_COMPATIBLE_WITH_CURRENT_EXPERIMENT, COMPATIBILITY_UNKNOWN],
+                "capital_limits_increased_to_qualify_a_venue": False,
+                "migration_effort_levels": [EFFORT_LOW, EFFORT_MEDIUM, EFFORT_HIGH],
+                "migration_implemented": False,
+                "credentials_requested": False,
+                "accounts_opened": False,
+                "transfers_designed": False,
+                "transfer_arbitrage_designed": False,
+                "is_arbitrage_claim": False,
+                "cross_venue_same_quote_currency_only": True,
+                "reference_data_adapter_built": False,
+                "gate_can_override_economic_guard": False,
+                "gate_can_override_risk_engine": False,
+                "gate_can_override_risk_policy": False,
+                "verdict": None,
+                "verdict_pending_frozen_experiment": True,
+                "economic_guard_changed": False,
+                "risk_engine_changed": False,
+                "drawdown_policy_changed": False,
                 "capital_limits_changed": False,
             },
             "production_gap": {
