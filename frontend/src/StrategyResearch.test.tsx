@@ -4,7 +4,7 @@ import {MvpApp} from './MvpApp';
 
 class Events {addEventListener(){} close(){}}
 
-const stopped:any={product_version:'AutoFund MVP 0.2.4',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+const stopped:any={product_version:'AutoFund MVP 0.2.5',demo_mode:true,app_state:'STOPPED',auto_execution:false,
  session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
  risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
  realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'mean-reversion-safe',strategy_id:'mean_reversion',
@@ -137,7 +137,42 @@ const research:any={research_version:'autofund.production-market-selector.v1',
   trade_tape_events:340,capture_seconds:3600,health:'HEALTHY',gaps:0,duplicates:2,
   sequence_regressions:0,anomalies_repaired:0,bounded_storage:true,retention_hours:72,
   queue_position_observable:false,passive_fill_exactness:'BOUNDED_ONLY',
-  adverse_selection_analysis_possible:true,exact_passive_fill_claim_made:false}};
+  adverse_selection_analysis_possible:true,exact_passive_fill_claim_made:false},
+ asymmetry_research:{hypothesis:'entries near a genuine invalidation may improve geometry',
+  challengers:[
+   {profile_id:'structural-invalidation-pullback-15m-PB-A-v1',
+    strategy_id:'structural_invalidation_pullback',version:'0.1',
+    fingerprint:'9'.repeat(64),strategy_fingerprint:'a'.repeat(64),
+    concept:'structural_invalidation_pullback',
+    asymmetric_challenger_version:'autofund.asymmetric-challenger.v1',
+    description:'pullback entry',
+    timeframe:{name:'15m',seconds:900,base_bars:15,label_convention:'BUCKET_OPEN'},
+    parameters:{max_risk_bps:'120',max_holding_bars:'16'}},
+   {profile_id:'expansion-retest-1h-RT-A-v1',strategy_id:'expansion_retest',version:'0.1',
+    fingerprint:'b'.repeat(64),strategy_fingerprint:'c'.repeat(64),concept:'expansion_retest',
+    asymmetric_challenger_version:'autofund.asymmetric-challenger.v1',
+    description:'retest entry',
+    timeframe:{name:'1h',seconds:3600,base_bars:60,label_convention:'BUCKET_OPEN'},
+    parameters:{max_risk_bps:'120',max_holding_bars:'24'}}],
+  challenger_ids:['structural-invalidation-pullback-15m-PB-A-v1',
+   'expansion-retest-1h-RT-A-v1'],
+  max_configurations_per_challenger:4,
+  configuration_budget:{'structural_invalidation_pullback:15m':4,
+   'structural_invalidation_pullback:1h':4,'expansion_retest:15m':4,'expansion_retest:1h':4},
+  reward_risk_thresholds:['0.5','0.75','1.0','2.0'],
+  threshold_basis:'band derived from the unchanged gate, which nets friction from both paths',
+  selection_rule:['risk_gates_satisfied','median_mfe_to_mae_descending',
+   'median_net_to_mae_descending','net_pnl_descending'],
+  comparison_semantics:['risk_gates_satisfied_on_holdout',
+   'median_mfe_to_mae_strictly_greater_than_predecessor',
+   'median_net_to_mae_not_worse_than_predecessor','holdout_net_pnl_non_negative'],
+  all_configurations_retained:true,thresholds_chosen_before_results:true,
+  certifying_execution_mode:'TAKER_TAKER',maker_bound_computed:false,
+  maker_bound_reason:'maker fills are unobservable from candle history',
+  gate_is_research_only:true,gate_can_override_economic_guard:false,
+  gate_can_override_risk_engine:false,gate_can_override_risk_policy:false,
+  no_future_structure:true,verdict:null,verdict_pending_frozen_experiment:true,
+  drawdown_policy_changed:false,risk_engine_changed:false,capital_limits_changed:false}};
 
 beforeEach(()=>{vi.stubGlobal('EventSource',Events);vi.stubGlobal('fetch',vi.fn().mockResolvedValue({json:async()=>({control_token:'token'})}))});
 afterEach(()=>{cleanup();vi.unstubAllGlobals()});
@@ -317,8 +352,11 @@ test('the horizon verdict is withheld until the frozen experiment runs',()=>{
  render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
  openProfiles();
  // No verdict is published: the page must not imply a finding that has not been measured.
- expect(document.querySelector('[data-verdict-pending="true"]')).toBeTruthy();
- expect(screen.getByText('PENDING FROZEN EXPERIMENT')).toBeTruthy();
+ const pending=document.querySelector('[data-verdict-pending="true"]');
+ expect(pending).toBeTruthy();
+ // Scoped to the cell: both the horizon and the asymmetry experiment withhold a verdict, so
+ // a page-wide string match would be ambiguous.
+ expect(pending?.textContent).toContain('PENDING FROZEN EXPERIMENT');
 });
 
 test('only taker execution may certify and the maker bound never can',()=>{
@@ -378,4 +416,62 @@ test('capture storage is bounded so a long run cannot fill the disk',()=>{
  render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
  openProfiles();
  expect(document.querySelector('[data-bounded-storage="true"]')).toBeTruthy();
+});
+
+test('the asymmetry experiment is shown as predeclared, not as a result',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Asymmetric opportunity research')).toBeTruthy();
+ expect(document.querySelector('[data-asym-thresholds="0.5,0.75,1.0,2.0"]')).toBeTruthy();
+ expect(document.querySelector('[data-asym-thresholds-frozen="true"]')).toBeTruthy();
+ // No verdict is published: the page must not imply a finding that has not been measured.
+ const pending=document.querySelector('[data-asym-verdict-pending="true"]');
+ expect(pending).toBeTruthy();
+ // Both the horizon and the asymmetry experiment withhold their verdict, so assert on the
+ // cell's own text rather than on a page-wide string match, which would be ambiguous.
+ expect(pending?.textContent).toContain('PENDING FROZEN EXPERIMENT');
+});
+
+test('the asymmetry gate is shown as subordinate to both authoritative gates',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-asym-gate-research-only="true"]')).toBeTruthy();
+ // Asymmetry cannot substitute for net economics, and the page must say so.
+ expect(document.querySelector('[data-asym-overrides-economic="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-asym-overrides-risk="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-asym-overrides-policy="false"]')).toBeTruthy();
+});
+
+test('risk policy and the risk engine are shown as unchanged',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-asym-drawdown-changed="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-asym-risk-changed="false"]')).toBeTruthy();
+});
+
+test('structure is declared to use only past data and configs are all retained',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-asym-no-future-structure="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-asym-all-retained="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-asym-config-budget="4"]')).toBeTruthy();
+});
+
+test('no maker bound is computed for the asymmetry experiment',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-asym-maker-bound="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-asym-certifying-mode="TAKER_TAKER"]')).toBeTruthy();
+});
+
+test('each asymmetric challenger reports its concept, timeframe and risk cap',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const rows=document.querySelectorAll('[data-asym-profile]');
+ expect(rows.length).toBe(2);
+ expect(rows[0].textContent).toContain('structural_invalidation_pullback');
+ expect(rows[0].textContent).toContain('120');
+ const hourly=Array.from(rows)
+   .filter(row=>row.getAttribute('data-asym-profile')?.includes('-1h-'));
+ expect(hourly.length).toBe(1);
 });

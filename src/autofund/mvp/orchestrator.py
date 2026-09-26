@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2.4"
+PRODUCT_VERSION = "AutoFund MVP 0.2.5"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1338,6 +1338,23 @@ class AutoFundOrchestrator:
         The champion's own economic verdict is computed here so an operator can see
         *why* its BUYs are refused at the real fee, rather than inferring it.
         """
+        from .asymmetric_challengers import (
+            asymmetric_challenger_ids,
+            asymmetric_challengers,
+        )
+        from .asymmetry_experiment import (
+            COMPARISON_SEMANTICS,
+            MAX_CONFIGURATIONS_PER_CHALLENGER,
+            configuration_budget,
+            threshold_basis_text,
+        )
+        from .asymmetry_experiment import (
+            SELECTION_RULE as ASYMMETRY_SELECTION_RULE,
+        )
+        from .asymmetry_gate import (
+            PREDECLARED_REWARD_RISK_THRESHOLDS,
+            friction_bps_for,
+        )
         from .challenger_research import CONFIG_SETS, SELECTION_RULE
         from .economics import DEFAULT_POLICY
         from .execution_gap import MISSING, PARTIAL, PRESENT, architecture_gap
@@ -1536,6 +1553,42 @@ class AutoFundOrchestrator:
                 "passive_fill_exactness": PASSIVE_FILL_EXACTNESS,
                 "adverse_selection_analysis_possible": False,
                 "exact_passive_fill_claim_made": False,
+            },
+            # Asymmetric opportunity research (MVP 0.2.5). The gate below is the weakest of
+            # three and states so: it can only ever refuse, never admit what the economic
+            # guard or the risk policy has already refused.
+            "asymmetry_research": {
+                "hypothesis": ("entries placed near a genuine invalidation boundary may "
+                               "improve reward/risk geometry enough to clear friction"),
+                "challengers": [profile.public() for profile in asymmetric_challengers()],
+                "challenger_ids": list(asymmetric_challenger_ids()),
+                "max_configurations_per_challenger": MAX_CONFIGURATIONS_PER_CHALLENGER,
+                "configuration_budget": dict(configuration_budget()),
+                "reward_risk_thresholds": [str(t)
+                                           for t in PREDECLARED_REWARD_RISK_THRESHOLDS],
+                "threshold_basis": threshold_basis_text(
+                    friction_bps=friction_bps_for(taker_fee_rate=taker_fee,
+                                                  spread_bps=Decimal("12"),
+                                                  slippage_bps=Decimal("5")),
+                    max_risk_bps=Decimal("281.54545454545454545454545454545454545454545454545")),
+                "selection_rule": list(ASYMMETRY_SELECTION_RULE),
+                "comparison_semantics": list(COMPARISON_SEMANTICS),
+                "all_configurations_retained": True,
+                "thresholds_chosen_before_results": True,
+                "certifying_execution_mode": "TAKER_TAKER",
+                "maker_bound_computed": False,
+                "maker_bound_reason": ("maker fills are unobservable from candle history and "
+                                       "may not make a challenger pass"),
+                "gate_is_research_only": True,
+                "gate_can_override_economic_guard": False,
+                "gate_can_override_risk_engine": False,
+                "gate_can_override_risk_policy": False,
+                "no_future_structure": True,
+                "verdict": None,
+                "verdict_pending_frozen_experiment": True,
+                "drawdown_policy_changed": False,
+                "risk_engine_changed": False,
+                "capital_limits_changed": False,
             },
             "production_gap": {
                 "missing": [item.name for item in architecture_gap()

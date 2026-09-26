@@ -107,6 +107,41 @@ export interface MicrostructureCaptureView {
   exact_passive_fill_claim_made:boolean;
 }
 
+export interface AsymmetryProfileView {
+  profile_id:string; strategy_id:string; version:string; fingerprint:string;
+  strategy_fingerprint:string; concept:string; asymmetric_challenger_version:string;
+  description:string;
+  parameters:[string,string][]|Record<string,string>;
+  timeframe?:{name:string;seconds:number;base_bars:number;label_convention:string};
+}
+
+export interface AsymmetryResearchView {
+  hypothesis:string;
+  challengers:AsymmetryProfileView[];
+  challenger_ids:string[];
+  max_configurations_per_challenger:number;
+  configuration_budget:Record<string,number>;
+  reward_risk_thresholds:string[];
+  threshold_basis:string;
+  selection_rule:string[];
+  comparison_semantics:string[];
+  all_configurations_retained:boolean;
+  thresholds_chosen_before_results:boolean;
+  certifying_execution_mode:string;
+  maker_bound_computed:boolean;
+  maker_bound_reason:string;
+  gate_is_research_only:boolean;
+  gate_can_override_economic_guard:boolean;
+  gate_can_override_risk_engine:boolean;
+  gate_can_override_risk_policy:boolean;
+  no_future_structure:boolean;
+  verdict:string|null;
+  verdict_pending_frozen_experiment:boolean;
+  drawdown_policy_changed:boolean;
+  risk_engine_changed:boolean;
+  capital_limits_changed:boolean;
+}
+
 export interface StrategyResearchView {
   research_version:string;
   promotion:string;
@@ -132,6 +167,7 @@ export interface StrategyResearchView {
   production_gap?:ProductionGapView;
   horizon_research?:HorizonResearchView;
   microstructure_capture?:MicrostructureCaptureView;
+  asymmetry_research?:AsymmetryResearchView;
 }
 
 /** Shadow rows carry whichever fields the pipeline produced; read them defensively. */
@@ -494,6 +530,91 @@ function MicrostructurePanel({research}:{research:StrategyResearchView}){
   </>;
 }
 
+/**
+ * Asymmetric opportunity research (MVP 0.2.5). Reports a predeclared experiment and the
+ * arithmetic that constrains it, not a result: the verdict comes from a frozen manifest
+ * evaluated on a holdout, and until that has run there is nothing to claim. The gate's
+ * subordination is stated explicitly because a research gate that looked authoritative would
+ * invite someone to rely on it.
+ */
+function AsymmetryPanel({research}:{research:StrategyResearchView}){
+  const asym=research.asymmetry_research;
+  if(!asym)return null;
+  const params=(p:AsymmetryProfileView['parameters'])=>
+    Array.isArray(p)?p:Object.entries(p as Record<string,string>);
+  return <>
+    <h3>Asymmetric opportunity research</h3>
+    <p>Entries placed near a genuine invalidation boundary, so the risk is the distance to a
+      real price structure rather than a volatility multiple. The unchanged risk gate nets
+      friction from both the reward and the risk path, so the gross move it demands starts at
+      friction itself — which is why a narrow, honestly-placed stop is the only lever that
+      changes the geometry.</p>
+    <div className="table"><table><tbody>
+      <tr><th>Hypothesis</th><td>{asym.hypothesis}</td></tr>
+      <tr><th>Challengers</th>
+        <td data-challenger-count={asym.challengers.length}>{asym.challengers.length}</td></tr>
+      <tr><th>Max configurations per challenger</th>
+        <td data-asym-config-budget={asym.max_configurations_per_challenger}>
+          {asym.max_configurations_per_challenger}</td></tr>
+      <tr><th>All configurations retained</th>
+        <td data-asym-all-retained={asym.all_configurations_retained}>
+          {asym.all_configurations_retained?'YES':'NO'}</td></tr>
+      <tr><th>Thresholds chosen before results</th>
+        <td data-asym-thresholds-frozen={asym.thresholds_chosen_before_results}>
+          {asym.thresholds_chosen_before_results?'YES':'NO'}</td></tr>
+      <tr><th>Reward/risk band tested</th>
+        <td data-asym-thresholds={asym.reward_risk_thresholds.join(',')}>
+          {asym.reward_risk_thresholds.join(', ')}</td></tr>
+      <tr><th>Certifying execution mode</th>
+        <td data-asym-certifying-mode={asym.certifying_execution_mode}>
+          {asym.certifying_execution_mode}</td></tr>
+      <tr><th>Maker bound computed</th>
+        <td data-asym-maker-bound={asym.maker_bound_computed}>
+          {asym.maker_bound_computed?'YES':'NO'}</td></tr>
+      <tr><th>Gate is research only</th>
+        <td data-asym-gate-research-only={asym.gate_is_research_only}>
+          {asym.gate_is_research_only?'YES':'NO'}</td></tr>
+      <tr><th>Can override EconomicEdgeGuard</th>
+        <td data-asym-overrides-economic={asym.gate_can_override_economic_guard}>
+          {asym.gate_can_override_economic_guard?'YES':'NO'}</td></tr>
+      <tr><th>Can override RiskEngine</th>
+        <td data-asym-overrides-risk={asym.gate_can_override_risk_engine}>
+          {asym.gate_can_override_risk_engine?'YES':'NO'}</td></tr>
+      <tr><th>Can widen risk policy</th>
+        <td data-asym-overrides-policy={asym.gate_can_override_risk_policy}>
+          {asym.gate_can_override_risk_policy?'YES':'NO'}</td></tr>
+      <tr><th>Structure uses only past data</th>
+        <td data-asym-no-future-structure={asym.no_future_structure}>
+          {asym.no_future_structure?'YES':'NO'}</td></tr>
+      <tr><th>RiskEngine changed</th>
+        <td data-asym-risk-changed={asym.risk_engine_changed}>
+          {asym.risk_engine_changed?'YES':'NO'}</td></tr>
+      <tr><th>Drawdown policy changed</th>
+        <td data-asym-drawdown-changed={asym.drawdown_policy_changed}>
+          {asym.drawdown_policy_changed?'YES':'NO'}</td></tr>
+      <tr><th>Verdict</th>
+        <td data-asym-verdict-pending={asym.verdict_pending_frozen_experiment}>
+          {asym.verdict??'PENDING FROZEN EXPERIMENT'}</td></tr>
+    </tbody></table></div>
+
+    <p className="policy">Why the band is {asym.reward_risk_thresholds.join(' to ')}: {asym.threshold_basis}</p>
+
+    <h4>Asymmetric challengers</h4>
+    <div className="table"><table>
+      <thead><tr><th>Profile</th><th>Concept</th><th>Timeframe</th>
+        <th>Max risk (bps)</th><th>Holding limit</th></tr></thead>
+      <tbody>{asym.challengers.map(profile=><tr key={profile.profile_id}
+        data-asym-profile={profile.profile_id} data-concept={profile.concept}>
+        <td>{profile.profile_id}</td>
+        <td>{profile.concept}</td>
+        <td>{text(profile.timeframe?.name)}</td>
+        <td>{text(Object.fromEntries(params(profile.parameters)).max_risk_bps)}</td>
+        <td>{text(Object.fromEntries(params(profile.parameters)).max_holding_bars)}</td>
+      </tr>)}
+      </tbody></table></div>
+  </>;
+}
+
 export function StrategyResearchPage({research}:
   {research:StrategyResearchView|undefined|null}){
   if(!research)return <article>
@@ -530,6 +651,7 @@ export function StrategyResearchPage({research}:
     <ExecutionResearchPanel research={research}/>
     <HorizonPanel research={research}/>
     <MicrostructurePanel research={research}/>
+    <AsymmetryPanel research={research}/>
     <ShadowTable rows={research.shadow}/>
     <MarketTable research={research}/>
 
