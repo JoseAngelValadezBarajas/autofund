@@ -3,6 +3,9 @@ import {LiveActivityPage,LiveMarketPage,LiveOperatorView,LiveTelemetryPage,type 
 import {LearningPage,MarketScannerPage,type LearningView,type ScannerEvidence} from './MarketScanner';
 import {StrategyResearchPage,type StrategyResearchView} from './StrategyResearch';
 import {ProductionMarketsPage,type ProductionMarketsView} from './ProductionMarkets';
+import {AlphaRegistryPage,ArtifactIndexPage,CampaignsPage,ControlCenterPage,
+  EligibilityPage,EvidenceExplorerPage,ExperimentRegistryPage,StrategyRegistryPage,
+  TimelinePage} from './ControlCenter';
 
 type Snapshot={product_version:string;demo_mode:boolean;app_state:string;auto_execution:boolean;session_id:string|null;cash_mxn:string;equity_mxn:string;deployed_mxn:string;market_quality:string;accounting_status:string;risk_status:string;connected:boolean;kill_triggered:boolean;position:any;last_signal:string;orders:number;fills:number;realized_pnl_mxn:string;fees_mxn:string;telemetry:any[];champion:any;market_regime:string;challengers:any[];wallet?:{status:string;error?:string|null;read_only:boolean;balances:{currency:string;total:string;available:string;locked:string;approx_mxn:string|null}[]};execution?:any;production_preflight?:{ready:boolean;label:string;reason:string;blockers:string[];guidance?:string[]};runtime?:MvpObservability['runtime'];observability?:MvpObservability['observability'];market_state?:string;pipeline?:MvpObservability['pipeline'];strategy?:MvpObservability['strategy'];candles?:MvpObservability['candles'];metrics?:MvpObservability['metrics'];signals?:MvpObservability['signals'];economics?:EconomicExitView;blocked_recovery?:MvpObservability['blocked_recovery'];runtime_gaps?:MvpObservability['runtime_gaps'];monitored_seconds?:number|null;session?:MvpObservability['session']&{started_at?:string|null;ended_at?:string|null;actual_runtime_seconds?:number|null;stop_reason?:string|null;frozen?:boolean};learning?:LearningView;scanner?:ScannerEvidence;strategy_research?:StrategyResearchView;production_markets?:ProductionMarketsView};
 
@@ -49,7 +52,9 @@ function EconomicExitPanel({economics}:{economics:EconomicExitView}){
   </>
 }
 
-const pages=['Overview','Market','Activity','Wallet','Positions','Ledger','Sessions','Learning','Profiles','Markets','Telemetry','System','Scanner'];
+const pages=['Overview','Market','Activity','Wallet','Positions','Ledger','Sessions','Learning','Profiles','Markets','Telemetry','System','Scanner',
+  // Control Center (0.3.0). Read-only research views: nothing here can place an order.
+  'Control Center','Alpha Registry','Strategy Registry','Experiments','Evidence','Campaigns','Timeline','Eligibility','Artifacts'];
 
 /** True when the backend published a real live observability model. */
 function live(data:Snapshot):MvpObservability|null{
@@ -192,6 +197,16 @@ export function MvpApp({initial}:{initial:Snapshot}){
       {page==='Profiles'&&<StrategyResearchPage research={data.strategy_research}/>}
 
       {page==='Markets'&&<ProductionMarketsPage markets={data.production_markets}/>}
+
+      {page==='Control Center'&&<ControlCenterPage/>}
+      {page==='Alpha Registry'&&<AlphaRegistryPage/>}
+      {page==='Strategy Registry'&&<StrategyRegistryPage/>}
+      {page==='Experiments'&&<ExperimentRegistryPage/>}
+      {page==='Evidence'&&<EvidenceExplorerPage/>}
+      {page==='Campaigns'&&<CampaignsPage/>}
+      {page==='Timeline'&&<TimelinePage/>}
+      {page==='Eligibility'&&<EligibilityPage/>}
+      {page==='Artifacts'&&<ArtifactIndexPage/>}
 
       {page==='Telemetry'&&(model
         ?<LiveTelemetryPage model={model} now={now}/>

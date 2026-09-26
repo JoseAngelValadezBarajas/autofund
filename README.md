@@ -1,7 +1,9 @@
-# AutoFund MVP 0.1.1
+# AutoFund MVP 0.3.0
 
-AutoFund is a bounded local application for BTC/MXN monitoring, session control,
-financial accounting and controlled Production execution. Its normal entry point is:
+AutoFund is a bounded local quantitative research, validation and execution
+platform for BTC/MXN. It discovers information sources, tests whether they are
+economically usable at real venue friction, and executes only when a human
+explicitly authorizes a session. Its normal entry point is:
 
 ```powershell
 cd frontend
@@ -23,6 +25,77 @@ See [MVP specification](docs/MVP_0_1_SPEC.md),
 [telemetry](docs/TELEMETRY_SPEC.md), [adaptive learning](docs/ADAPTIVE_LEARNING_SPEC.md),
 and the [operations runbook](docs/OPERATIONS_RUNBOOK.md). Lower-level `shadow`,
 `dashboard`, `bitso-prod` and `live` commands remain engineering and certification tools.
+
+## What 0.3.0 adds — the Research Control Center
+
+Milestones 0.1.3 through 0.2.8 produced eleven experiments' worth of capability and
+evidence, most of it negative, held in artifacts rather than in a product. 0.3.0 adds
+no new strategy and no new alpha investigation. It adds the observability layer that
+makes the existing work accountable: a **Research Control Center** that answers the
+questions an operator actually has, without inventing answers it cannot support.
+
+### Three truths that stay separate
+
+The central product invariant is that these are four independent facts and are never
+combined into a single status:
+
+| Dimension | Question | Source of truth |
+|---|---|---|
+| **Engineering state** | Is the system running correctly? | ledger, execution, market data, collectors |
+| **Research-economic evidence** | Is there a measured, economically usable edge? | certifications, captures, frozen policies |
+| **Operational authorization** | Has a human authorized a live session? | the session state machine |
+| **Current action** | What is AutoFund doing right now? | the trading loop |
+
+A green engineering state must never read as profitable evidence. Positive research
+evidence must never read as permission to trade. The `exchange wallet` is never summed
+with AutoFund's own inventory. Production authorization **fails closed**: only the
+single `RUNNING` state authorizes, so every state the code has not been taught about —
+and any state a future version adds — is unauthorized by default rather than by
+omission.
+
+### The Control Center
+
+Ten read-only views, served from `/api/v1/research`, over a registry rebuilt
+deterministically from the artifacts already on disk:
+
+- **Overview** — the four separated truths, portfolio, system health, evidence quality
+  and production readiness.
+- **Alpha Registry** — information sources. A source that predicts is reported
+  separately from a source that is economically usable. The one validated signal shows
+  its real measurement (2.5136 bps of movement) against its real required friction
+  (173.00 bps) and a headroom of −170.49 bps.
+- **Strategy Registry** — four separated verdicts per profile. A strategy can be
+  engineering `PASS` and economic `FAIL`, and here several are.
+- **Experiment Registry** — every milestone with its hypothesis, its predeclared
+  windows and its outcome. A negative result is recorded as a result.
+- **Evidence Explorer** — provenance per record. A synthetic fixture is not a real
+  observation, and only the latter can support a conclusion.
+- **Campaigns** — process health and evidence conclusion reported separately. A
+  perfectly healthy collector can still have produced nothing usable: the cross-venue
+  capture covered 0.176 of the 72 hours it predeclared, so it could not have observed a
+  rare event, and the page says so instead of reporting its absence as a market finding.
+- **Activity timeline** — research and production events. Financial events are *not*
+  duplicated here; they keep their authoritative source in the production journal.
+- **Production eligibility** — a deterministic blocking reason for every market and
+  profile pair, so "not selected" is never ambiguous.
+- **Artifact index** — every indexed artifact with a fingerprint, excluding the
+  registry's own output.
+
+### What it does not do
+
+There is **no** BUY/SELL control, order ticket, quantity box or manual trade control
+anywhere in the Control Center, and **no write endpoint** on the research API. A test
+asserts every research route is a read. Unknown values are reported as `UNKNOWN`,
+`NOT_RECORDED` or `NOT_APPLICABLE` rather than invented. MAE and MFE are reported as
+`NOT_RECORDED` where no capture exists that could produce them.
+
+This milestone adds no strategy, changes no certification threshold, no risk limit and
+no economic policy. The `EconomicEdgeGuard`, `RiskEngine`, strategy parameters, capital
+limits and exchange mutation allowlist are unchanged.
+
+**This milestone is not a claim of profitability.** It makes the current position
+legible: one predictive and economically unusable signal, three frozen strategies,
+zero certified opportunities and Production authorized by no session.
 
 ## What 0.1.1 adds
 

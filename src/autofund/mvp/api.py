@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from autofund.live.models import LiveError
+from autofund.version import PRODUCT_VERSION, VERSION
 
 from .orchestrator import AutoFundOrchestrator, SessionConfig, SessionStartBlocked
 
@@ -54,7 +55,7 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
             # Release the backend publication thread; never touches financial state.
             orchestrator.shutdown()
 
-    app = FastAPI(title="AutoFund MVP 0.2.8", version="0.2.8", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app = FastAPI(title=PRODUCT_VERSION, version=VERSION, docs_url=None, redoc_url=None, lifespan=lifespan)
     control_token = secrets.token_urlsafe(32)
     allowed_hosts = {host, f"{host}:{port}", "localhost", f"localhost:{port}", "testserver"}
 
@@ -80,7 +81,7 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
 
     @app.get("/api/v1/health")
     def health() -> dict[str, object]:
-        return {"application": "AutoFund", "product_version": "AutoFund MVP 0.2.8",
+        return {"application": "AutoFund", "product_version": PRODUCT_VERSION,
                 "ready": True,
                 "app_state": orchestrator.state, "demo_mode": orchestrator.demo}
 
@@ -171,6 +172,13 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
                 yield "event: snapshot\ndata: " + json.dumps(orchestrator.snapshot(), default=str, separators=(",", ":")) + "\n\n"
                 await asyncio.sleep(1)
         return StreamingResponse(events(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+
+    # The research Control Center's read-only surface. Registered before the static mount at "/"
+    # so its routes are matched first, and kept in its own module so the research read model never
+    # gains a dependency on the trading state machine.
+    from autofund.research.api import _default_service, build_research_router
+
+    app.include_router(build_research_router(_default_service()))
 
     if dist and dist.exists():
         app.mount("/", StaticFiles(directory=dist, html=True), name="mvp")

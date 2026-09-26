@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from autofund.decimal_utils import decimal
 from autofund.live.models import LiveError
+from autofund.version import PRODUCT_VERSION
 
 from .adaptive import AdaptiveEngine
 from .champion import DECISION_BUY, DECISION_SELL, evaluate_champion, exit_boundary
@@ -38,7 +39,6 @@ SINGLE_ORDER_CAP = Decimal("11")
 # reader could mistake for a real requirement.
 ACCOUNT_CONFIRMED_TAKER_RATE = Decimal("0.0078")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2.8"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.

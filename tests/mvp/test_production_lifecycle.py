@@ -25,6 +25,8 @@ from autofund.mvp.orchestrator import (
 )
 from autofund.mvp.scanner import MarketScanner
 
+from .route_inventory import route_methods
+
 D = Decimal
 CONFIRMATION = "START AUTOFUND REAL 50"
 ORDER_BOOK = "GET /api/v3/order_book?book=btc_mxn"
@@ -224,8 +226,8 @@ def test_wallet_api_is_get_only_and_separates_account_from_portfolio(production)
     assert body["autofund_portfolio"]["position"] is None
     assert body["autofund_portfolio"]["cash_mxn"] == "50"
     assert transport.posts == 0
-    assert not any(route.path.startswith("/api/v1/mvp/wallet") and "POST" in route.methods
-                   for route in http.app.routes)
+    wallet_methods = route_methods(http.app).get("/api/v1/mvp/wallet", frozenset())
+    assert wallet_methods == {"GET"}
 
 
 def test_wallet_failure_degrades_view_without_mutating_ledger(production):

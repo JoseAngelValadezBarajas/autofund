@@ -3,6 +3,8 @@ from fastapi.testclient import TestClient
 from autofund.mvp.api import create_mvp_app
 from autofund.mvp.orchestrator import AutoFundOrchestrator, DemoAutonomousRunner
 
+from .route_inventory import mutating_routes
+
 
 def client(tmp_path):
     orchestrator = AutoFundOrchestrator(tmp_path, DemoAutonomousRunner(), demo=True)
@@ -53,8 +55,7 @@ def test_kill_and_only_control_mutations_exist(tmp_path):
     assert app.state == "HALTED"
     for path in ("buy", "sell", "order", "execute", "cancel", "withdraw", "transfer"):
         assert http.post("/api/v1/" + path, json={}, headers=headers).status_code == 404
-    mutations = {(route.path, method) for route in http.app.routes for method in getattr(route, "methods", set())
-                 if method in {"POST", "PUT", "PATCH", "DELETE"}}
+    mutations = mutating_routes(http.app)
     assert mutations == {(f"/api/v1/control/{name}", "POST") for name in ("start", "stop", "kill")}
 
 

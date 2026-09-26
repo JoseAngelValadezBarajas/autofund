@@ -22,7 +22,7 @@ them the milestone would have reported a number it could not trade.
 
 **A sign inversion.** The first implementation measured a Bitso BUY as favourable when Bitso was
 
-*above* the reference, which is a bet on the incumbent falling â€” mean reversion, not cross-venue
+*above* the reference, which is a bet on the incumbent falling — mean reversion, not cross-venue
 
 lag. Lag alpha requires the incumbent to be *behind*, so the tests pin the direction rather than
 
@@ -384,7 +384,7 @@ def test_an_fx_normalised_pair_is_marked_as_such_and_widens_the_uncertainty() ->
 
 # ---------------------------------------------------------------------------------------------
 
-# Executable dislocation direction (spec section 7) â€” the sign, pinned
+# Executable dislocation direction (spec section 7) — the sign, pinned
 
 # ---------------------------------------------------------------------------------------------
 

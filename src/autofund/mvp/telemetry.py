@@ -9,6 +9,8 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
+from autofund.version import PRODUCT_VERSION
+
 CHECKPOINTS = frozenset({
     "APP_BOOT", "RECOVERY_STARTED", "RECOVERY_COMPLETED",
     "SESSION_START_REQUESTED", "SESSION_STARTED", "SESSION_START_BLOCKED",
@@ -111,7 +113,7 @@ class SessionTelemetry:
                       "ended_at": ended.isoformat().replace("+00:00", "Z"),
                       "stop_reason": stop_reason, **(time_facts or {})}
         identity_block = {"session_id": self.session_id, "run_id": self.run_id,
-                          "product_version": "AutoFund MVP 0.2.3",
+                          "product_version": PRODUCT_VERSION,
                           "strategy_version": self.strategy_version, **(identity or {})}
         scanner = scanner_evidence(rows)
         facts_with_latency = {**facts, "largest_latency_ms": round(largest, 3)}
