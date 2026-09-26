@@ -4,7 +4,7 @@ import {MvpApp} from './MvpApp';
 
 class Events {addEventListener(){} close(){}}
 
-const stopped:any={product_version:'AutoFund MVP 0.2.7',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+const stopped:any={product_version:'AutoFund MVP 0.2.8',demo_mode:true,app_state:'STOPPED',auto_execution:false,
  session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
  risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
  realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'mean-reversion-safe',strategy_id:'mean_reversion',
@@ -293,6 +293,33 @@ const research:any={research_version:'autofund.production-market-selector.v1',
   credentials_requested:false,accounts_opened:false,transfers_designed:false,
   transfer_arbitrage_designed:false,is_arbitrage_claim:false,
   cross_venue_same_quote_currency_only:true,reference_data_adapter_built:false,
+  gate_can_override_economic_guard:false,gate_can_override_risk_engine:false,
+  gate_can_override_risk_policy:false,verdict:null,verdict_pending_frozen_experiment:true,
+  economic_guard_changed:false,risk_engine_changed:false,drawdown_policy_changed:false,
+  capital_limits_changed:false},
+ cross_venue_research:{hypothesis:'rare tail dislocations may clear trading costs',
+  reference_venues:['Binance'],reference_coverage:['BTC/MXN','ETH/MXN','SOL/MXN'],
+  pairs_without_usable_reference:['XRP/MXN'],
+  pairs_without_reference_reason:'Binance XRP/MXN was not trading',
+  same_quote_only:true,fx_conversion_used:false,execution_venue:'Bitso',
+  external_venues_are_reference_only:true,
+  evidence_classes:['EXECUTABLE_BOOK','TRADE_TAPE','CANDLE_SCREENING_ONLY'],
+  candle_screening_proves_executability:false,reference_spread_guard:true,
+  reference_spread_artifact_is_rejected:true,
+  required_executable_dislocation_bps:'160.39160000',
+  threshold_derivation:'minimum_viable_gross_edge_bps(spread=0)',
+  spread_double_count_avoided:true,maker_used_to_rescue_an_event:false,
+  fee_used_for_threshold:'0.0078',fee_source:'ACCOUNT_CONFIRMED_SCHEDULE',
+  dislocation_kinds:['RAW_MID_DISLOCATION','EXECUTABLE_BUY_DISLOCATION',
+   'EXECUTABLE_SELL_DISLOCATION'],
+  mechanisms:['BITSO_LAG','REFERENCE_MOVE_ONLY','BITSO_LOCAL_DISLOCATION','UNRESOLVED'],
+  uses_arbitrage_terminology:false,simultaneous_hedge_exists:false,
+  position_risk:'DIRECTIONAL_ONLY',predeclared_delays_seconds:[1,2,5,60],
+  minimum_episode_observations:2,required_capture_hours:72,
+  rare_events_are_acceptable:true,single_anomaly_cannot_be_a_candidate:true,
+  development_only:true,holdout_untouched_before_freeze:true,candidate_created:false,
+  candidate_fingerprint:null,validation_ran:false,capture_is_read_only:true,
+  authenticated_external_calls:0,transfers_designed:false,strategy_implemented:false,
   gate_can_override_economic_guard:false,gate_can_override_risk_engine:false,
   gate_can_override_risk_policy:false,verdict:null,verdict_pending_frozen_experiment:true,
   economic_guard_changed:false,risk_engine_changed:false,drawdown_policy_changed:false,
@@ -787,4 +814,95 @@ test('the early-fail classification and capture ladder are visible',()=>{
    '[data-venue-early-fail="STRUCTURALLY_UNTRADEABLE_FOR_THIS_ALPHA"]')).toBeTruthy();
  expect(document.querySelector('[data-venue-scenarios="100%,75%,50%,25%"]')).toBeTruthy();
  expect(document.querySelector('[data-venue-historical-friction="173.0000"]')).toBeTruthy();
+});
+
+test('cross-venue research shows Bitso as execution venue and the reference as read-only',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Cross-venue dislocation research')).toBeTruthy();
+ expect(document.querySelector('[data-cv-execution-venue="Bitso"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-reference-only="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-same-quote="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-fx="false"]')).toBeTruthy();
+});
+
+test('candle screening is declared unable to prove an executable dislocation',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ // A historical-looking number must never be presented as executable evidence.
+ expect(document.querySelector('[data-cv-candle-proves="false"]')).toBeTruthy();
+ const evidence=document.querySelector('[data-cv-evidence]');
+ expect(evidence?.textContent).toContain('CANDLE_SCREENING_ONLY');
+ expect(evidence?.textContent).toContain('EXECUTABLE_BOOK');
+});
+
+test('the reference-spread guard is active and an artifact is rejected',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ // This is the guard that caught the development artefact where an apparent dislocation sat
+ // inside the reference book's own bid-ask.
+ expect(document.querySelector('[data-cv-spread-guard="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-artifact-rejected="true"]')).toBeTruthy();
+});
+
+test('the economic threshold does not charge the spread twice and never uses maker',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-cv-spread-once="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-maker-rescue="false"]')).toBeTruthy();
+ const threshold=document.querySelector('[data-cv-threshold="160.39160000"]');
+ expect(threshold?.textContent).toContain('160.3916');
+});
+
+test('a price difference is never called arbitrage and carries directional risk',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-cv-arbitrage="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-hedge="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-risk="DIRECTIONAL_ONLY"]')).toBeTruthy();
+});
+
+test('a market without a usable reference is stated rather than left blank',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const gap=document.querySelector('[data-cv-no-reference="XRP/MXN"]');
+ expect(gap).toBeTruthy();
+ expect(gap?.textContent).toContain('XRP/MXN');
+ // The absence must not read as evidence that XRP showed nothing.
+ expect(gap?.textContent).toContain('not trading');
+});
+
+test('the capture window requirement is visible and no candidate was claimed',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-cv-required-hours="72"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-rare-ok="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-candidate="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-validation-ran="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-holdout="true"]')).toBeTruthy();
+});
+
+test('cross-venue research is read-only with no strategy or transfer designed',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-cv-read-only="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-auth-calls="0"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-transfers="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-strategy="false"]')).toBeTruthy();
+});
+
+test('the cross-venue model cannot override the economic guard, risk engine or policy',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-cv-overrides-economic="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-overrides-risk="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-cv-overrides-policy="false"]')).toBeTruthy();
+});
+
+test('the cross-venue verdict is withheld until the frozen experiment runs',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const pending=document.querySelector('[data-cv-verdict-pending="true"]');
+ expect(pending).toBeTruthy();
+ expect(pending?.textContent).toContain('PENDING FROZEN EXPERIMENT');
 });

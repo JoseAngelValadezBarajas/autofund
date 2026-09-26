@@ -232,6 +232,56 @@ export interface VenueEconomicsView {
   drawdown_policy_changed:boolean; capital_limits_changed:boolean;
 }
 
+export interface CrossVenueResearchView {
+  hypothesis:string;
+  reference_venues:string[];
+  reference_coverage:string[];
+  pairs_without_usable_reference:string[];
+  pairs_without_reference_reason:string;
+  same_quote_only:boolean;
+  fx_conversion_used:boolean;
+  execution_venue:string;
+  external_venues_are_reference_only:boolean;
+  evidence_classes:string[];
+  candle_screening_proves_executability:boolean;
+  reference_spread_guard:boolean;
+  reference_spread_artifact_is_rejected:boolean;
+  required_executable_dislocation_bps:string;
+  threshold_derivation:string;
+  spread_double_count_avoided:boolean;
+  maker_used_to_rescue_an_event:boolean;
+  fee_used_for_threshold?:string;
+  fee_source?:string;
+  dislocation_kinds:string[];
+  mechanisms:string[];
+  uses_arbitrage_terminology:boolean;
+  simultaneous_hedge_exists:boolean;
+  position_risk:string;
+  predeclared_delays_seconds:number[];
+  minimum_episode_observations:number;
+  required_capture_hours:number;
+  rare_events_are_acceptable:boolean;
+  single_anomaly_cannot_be_a_candidate:boolean;
+  development_only:boolean;
+  holdout_untouched_before_freeze:boolean;
+  candidate_created:boolean;
+  candidate_fingerprint:string|null;
+  validation_ran:boolean;
+  capture_is_read_only:boolean;
+  authenticated_external_calls:number;
+  transfers_designed:boolean;
+  strategy_implemented:boolean;
+  gate_can_override_economic_guard:boolean;
+  gate_can_override_risk_engine:boolean;
+  gate_can_override_risk_policy:boolean;
+  verdict:string|null;
+  verdict_pending_frozen_experiment:boolean;
+  economic_guard_changed:boolean;
+  risk_engine_changed:boolean;
+  drawdown_policy_changed:boolean;
+  capital_limits_changed:boolean;
+}
+
 export interface StrategyResearchView {
   research_version:string;
   promotion:string;
@@ -260,6 +310,7 @@ export interface StrategyResearchView {
   asymmetry_research?:AsymmetryResearchView;
   alpha_research?:AlphaResearchView;
   venue_economics?:VenueEconomicsView;
+  cross_venue_research?:CrossVenueResearchView;
 }
 
 /** Shadow rows carry whichever fields the pipeline produced; read them defensively. */
@@ -966,6 +1017,139 @@ function VenuePanel({research}:{research:StrategyResearchView}){
   </>;
 }
 
+/**
+ * Cross-venue rare dislocation research (MVP 0.2.8). The last alpha-source experiment under the
+ * current product assumptions.
+ *
+ * Two things are shown prominently because they are the ones a reader would otherwise get wrong.
+ * First, that candle screening cannot prove an executable dislocation, so a historical-looking
+ * number is never presented as one. Second, that the reference's own spread is the floor below
+ * which a difference is unattributable — the guard that caught this milestone's own development
+ * artefact, where an apparent 24 bps ETH dislocation sat entirely inside a 38 bps reference spread.
+ *
+ * The panel also states that the capture window was too short to conclude anything, rather than
+ * letting an empty result read as evidence of absence.
+ */
+function CrossVenuePanel({research}:{research:StrategyResearchView}){
+  const cv=research.cross_venue_research;
+  if(!cv)return null;
+  return <>
+    <h3>Cross-venue dislocation research</h3>
+    <p>{cv.hypothesis}. Bitso remains the hypothetical execution venue and the external market is a
+      reference only: no order path, no transfer and no authenticated call exists. A price
+      difference is not arbitrage, and with Bitso-only execution any position carries full
+      directional risk.</p>
+    <div className="table"><table><tbody>
+      <tr><th>Execution venue</th>
+        <td data-cv-execution-venue={cv.execution_venue}>{cv.execution_venue}</td></tr>
+      <tr><th>External venues are reference only</th>
+        <td data-cv-reference-only={cv.external_venues_are_reference_only}>
+          {cv.external_venues_are_reference_only?'YES':'NO'}</td></tr>
+      <tr><th>Reference venues</th>
+        <td data-cv-venues={cv.reference_venues.join(',')}>
+          {cv.reference_venues.join(', ')}</td></tr>
+      <tr><th>Markets with a reference</th>
+        <td data-cv-coverage={cv.reference_coverage.join(',')}>
+          {cv.reference_coverage.join(', ')}</td></tr>
+      <tr><th>Markets without a usable reference</th>
+        <td data-cv-no-reference={cv.pairs_without_usable_reference.join(',')}>
+          {cv.pairs_without_usable_reference.join(', ')||'NONE'}
+          {cv.pairs_without_usable_reference.length?` — ${cv.pairs_without_reference_reason}`:''}</td></tr>
+      <tr><th>Same quote currency only</th>
+        <td data-cv-same-quote={cv.same_quote_only}>{cv.same_quote_only?'YES':'NO'}</td></tr>
+      <tr><th>FX conversion used</th>
+        <td data-cv-fx={cv.fx_conversion_used}>{cv.fx_conversion_used?'YES':'NO'}</td></tr>
+      <tr><th>Evidence classes</th>
+        <td data-cv-evidence={cv.evidence_classes.join(',')}>
+          {cv.evidence_classes.join(', ')}</td></tr>
+      <tr><th>Candle screening proves executability</th>
+        <td data-cv-candle-proves={cv.candle_screening_proves_executability}>
+          {cv.candle_screening_proves_executability?'YES':'NO'}</td></tr>
+      <tr><th>Reference-spread guard active</th>
+        <td data-cv-spread-guard={cv.reference_spread_guard}>
+          {cv.reference_spread_guard?'YES':'NO'}</td></tr>
+      <tr><th>Reference-spread artifact rejected</th>
+        <td data-cv-artifact-rejected={cv.reference_spread_artifact_is_rejected}>
+          {cv.reference_spread_artifact_is_rejected?'YES':'NO'}</td></tr>
+      <tr><th>Required executable dislocation</th>
+        <td data-cv-threshold={cv.required_executable_dislocation_bps}>
+          {text(Number(cv.required_executable_dislocation_bps).toFixed(4))} bps</td></tr>
+      <tr><th>Spread double-count avoided</th>
+        <td data-cv-spread-once={cv.spread_double_count_avoided}>
+          {cv.spread_double_count_avoided?'YES':'NO'}</td></tr>
+      <tr><th>Maker used to rescue an event</th>
+        <td data-cv-maker-rescue={cv.maker_used_to_rescue_an_event}>
+          {cv.maker_used_to_rescue_an_event?'YES':'NO'}</td></tr>
+      <tr><th>Dislocation kinds priced</th>
+        <td data-cv-kinds={cv.dislocation_kinds.join(',')}>
+          {cv.dislocation_kinds.join(', ')}</td></tr>
+      <tr><th>Mechanisms classified</th>
+        <td>{cv.mechanisms.join(', ')}</td></tr>
+      <tr><th>Uses arbitrage terminology</th>
+        <td data-cv-arbitrage={cv.uses_arbitrage_terminology}>
+          {cv.uses_arbitrage_terminology?'YES':'NO'}</td></tr>
+      <tr><th>Simultaneous hedge exists</th>
+        <td data-cv-hedge={cv.simultaneous_hedge_exists}>
+          {cv.simultaneous_hedge_exists?'YES':'NO'}</td></tr>
+      <tr><th>Position risk</th>
+        <td data-cv-risk={cv.position_risk}>{cv.position_risk}</td></tr>
+      <tr><th>Predeclared delays (s)</th>
+        <td data-cv-delays={cv.predeclared_delays_seconds.join(',')}>
+          {cv.predeclared_delays_seconds.join(', ')}</td></tr>
+      <tr><th>Minimum episode observations</th>
+        <td data-cv-min-episode={cv.minimum_episode_observations}>
+          {cv.minimum_episode_observations}</td></tr>
+      <tr><th>Required capture duration</th>
+        <td data-cv-required-hours={cv.required_capture_hours}>
+          {cv.required_capture_hours} hours</td></tr>
+      <tr><th>Rare events acceptable</th>
+        <td data-cv-rare-ok={cv.rare_events_are_acceptable}>
+          {cv.rare_events_are_acceptable?'YES':'NO'}</td></tr>
+      <tr><th>Single anomaly cannot be a candidate</th>
+        <td data-cv-single-anomaly={cv.single_anomaly_cannot_be_a_candidate}>
+          {cv.single_anomaly_cannot_be_a_candidate?'YES':'NO'}</td></tr>
+      <tr><th>Development only</th>
+        <td data-cv-development-only={cv.development_only}>
+          {cv.development_only?'YES':'NO'}</td></tr>
+      <tr><th>Holdout untouched before freeze</th>
+        <td data-cv-holdout={cv.holdout_untouched_before_freeze}>
+          {cv.holdout_untouched_before_freeze?'YES':'NO'}</td></tr>
+      <tr><th>Candidate created</th>
+        <td data-cv-candidate={cv.candidate_created}>
+          {cv.candidate_created?'YES':'NO'}</td></tr>
+      <tr><th>Validation ran</th>
+        <td data-cv-validation-ran={cv.validation_ran}>
+          {cv.validation_ran?'YES':'NO'}</td></tr>
+      <tr><th>Capture is read-only</th>
+        <td data-cv-read-only={cv.capture_is_read_only}>
+          {cv.capture_is_read_only?'YES':'NO'}</td></tr>
+      <tr><th>Authenticated external calls</th>
+        <td data-cv-auth-calls={cv.authenticated_external_calls}>
+          {cv.authenticated_external_calls}</td></tr>
+      <tr><th>Transfers designed</th>
+        <td data-cv-transfers={cv.transfers_designed}>
+          {cv.transfers_designed?'YES':'NO'}</td></tr>
+      <tr><th>Strategy implemented</th>
+        <td data-cv-strategy={cv.strategy_implemented}>
+          {cv.strategy_implemented?'YES':'NO'}</td></tr>
+      <tr><th>Can override EconomicEdgeGuard</th>
+        <td data-cv-overrides-economic={cv.gate_can_override_economic_guard}>
+          {cv.gate_can_override_economic_guard?'YES':'NO'}</td></tr>
+      <tr><th>Can override RiskEngine</th>
+        <td data-cv-overrides-risk={cv.gate_can_override_risk_engine}>
+          {cv.gate_can_override_risk_engine?'YES':'NO'}</td></tr>
+      <tr><th>Can widen risk policy</th>
+        <td data-cv-overrides-policy={cv.gate_can_override_risk_policy}>
+          {cv.gate_can_override_risk_policy?'YES':'NO'}</td></tr>
+      <tr><th>Verdict</th>
+        <td data-cv-verdict-pending={cv.verdict_pending_frozen_experiment}>
+          {cv.verdict??'PENDING FROZEN EXPERIMENT'}</td></tr>
+    </tbody></table></div>
+
+    <p className="policy">Threshold: {cv.threshold_derivation}.</p>
+  </>;
+}
+
 export function StrategyResearchPage({research}:
   {research:StrategyResearchView|undefined|null}){
   if(!research)return <article>
@@ -1005,6 +1189,7 @@ export function StrategyResearchPage({research}:
     <AsymmetryPanel research={research}/>
     <AlphaPanel research={research}/>
     <VenuePanel research={research}/>
+    <CrossVenuePanel research={research}/>
     <ShadowTable rows={research.shadow}/>
     <MarketTable research={research}/>
 

@@ -30,8 +30,15 @@ from .telemetry import SessionTelemetry
 AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
+
+# The account-confirmed taker rate, used wherever a research calculation needs the real fee but a
+# runner may not be attached. A fallback of zero would make every derived threshold look trivially
+# achievable, which is the failure this constant exists to prevent: the executable-dislocation
+# threshold derived from a zero fee came out at 5 bps instead of 160.39, and 5 bps is a number a
+# reader could mistake for a real requirement.
+ACCOUNT_CONFIRMED_TAKER_RATE = Decimal("0.0078")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2.7"
+PRODUCT_VERSION = "AutoFund MVP 0.2.8"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1378,6 +1385,17 @@ class AutoFundOrchestrator:
         from .cross_market import (
             PREDECLARED_RELATIONSHIPS as CROSS_MARKET_RELATIONSHIPS,
         )
+        from .cross_venue_dislocation import (
+            DISLOCATION_KINDS,
+            EVIDENCE_CLASSES,
+            MECHANISMS,
+            MINIMUM_EPISODE_OBSERVATIONS,
+            PREDECLARED_DELAYS_SECONDS,
+            required_executable_dislocation_bps,
+        )
+        from .cross_venue_dislocation import (
+            REQUIRED_CAPTURE_HOURS as CROSS_VENUE_REQUIRED_CAPTURE_HOURS,
+        )
         from .economics import DEFAULT_POLICY
         from .execution_gap import MISSING, PARTIAL, PRESENT, architecture_gap
         from .horizon import PREDECLARED_TIMEFRAMES
@@ -1755,6 +1773,71 @@ class AutoFundOrchestrator:
                 "is_arbitrage_claim": False,
                 "cross_venue_same_quote_currency_only": True,
                 "reference_data_adapter_built": False,
+                "gate_can_override_economic_guard": False,
+                "gate_can_override_risk_engine": False,
+                "gate_can_override_risk_policy": False,
+                "verdict": None,
+                "verdict_pending_frozen_experiment": True,
+                "economic_guard_changed": False,
+                "risk_engine_changed": False,
+                "drawdown_policy_changed": False,
+                "capital_limits_changed": False,
+            },
+            # Cross-venue rare dislocation research (MVP 0.2.8). The last alpha-source experiment
+            # under the current product assumptions. It reports that the apparent dislocation is a
+            # property of the reference book's width rather than a disagreement between venues,
+            # and it states explicitly that its own capture is too short to conclude either way.
+            "cross_venue_research": {
+                "hypothesis": ("although average cross-venue dislocations are far below trading "
+                               "costs, rare tail events may be large and persistent enough to "
+                               "clear them"),
+                "reference_venues": ["Binance"],
+                "reference_coverage": ["BTC/MXN", "ETH/MXN", "SOL/MXN"],
+                "pairs_without_usable_reference": ["XRP/MXN"],
+                "pairs_without_reference_reason": ("Binance's XRP/MXN pair was not trading during "
+                                                   "development, so no reference exists"),
+                "same_quote_only": True,
+                "fx_conversion_used": False,
+                "execution_venue": "Bitso",
+                "external_venues_are_reference_only": True,
+                "evidence_classes": list(EVIDENCE_CLASSES),
+                "candle_screening_proves_executability": False,
+                "reference_spread_guard": True,
+                "reference_spread_artifact_is_rejected": True,
+                "required_executable_dislocation_bps": str(
+                    required_executable_dislocation_bps(
+                        taker_fee_rate=(
+                            taker_fee if taker_fee > Decimal("0")
+                            else ACCOUNT_CONFIRMED_TAKER_RATE),
+                        slippage_bps=Decimal("5"), policy=DEFAULT_POLICY)),
+                "fee_used_for_threshold": str(
+                    taker_fee if taker_fee > Decimal("0")
+                    else ACCOUNT_CONFIRMED_TAKER_RATE),
+                "fee_source": ("RUNNER" if taker_fee > Decimal("0")
+                               else "ACCOUNT_CONFIRMED_SCHEDULE"),
+                "threshold_derivation": ("minimum_viable_gross_edge_bps(taker_fee_rate=0.0078, "
+                                         "spread_bps=0, slippage_bps=5, policy=DEFAULT_POLICY)"),
+                "spread_double_count_avoided": True,
+                "maker_used_to_rescue_an_event": False,
+                "dislocation_kinds": list(DISLOCATION_KINDS),
+                "mechanisms": list(MECHANISMS),
+                "uses_arbitrage_terminology": False,
+                "simultaneous_hedge_exists": False,
+                "position_risk": "DIRECTIONAL_ONLY",
+                "predeclared_delays_seconds": list(PREDECLARED_DELAYS_SECONDS),
+                "minimum_episode_observations": MINIMUM_EPISODE_OBSERVATIONS,
+                "required_capture_hours": CROSS_VENUE_REQUIRED_CAPTURE_HOURS,
+                "rare_events_are_acceptable": True,
+                "single_anomaly_cannot_be_a_candidate": True,
+                "development_only": True,
+                "holdout_untouched_before_freeze": True,
+                "candidate_created": False,
+                "candidate_fingerprint": None,
+                "validation_ran": False,
+                "capture_is_read_only": True,
+                "authenticated_external_calls": 0,
+                "transfers_designed": False,
+                "strategy_implemented": False,
                 "gate_can_override_economic_guard": False,
                 "gate_can_override_risk_engine": False,
                 "gate_can_override_risk_policy": False,
