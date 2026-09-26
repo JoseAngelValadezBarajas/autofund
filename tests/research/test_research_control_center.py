@@ -435,8 +435,37 @@ def test_digest_changes_when_a_record_changes() -> None:
 
 
 def test_absolute_path_is_rejected() -> None:
+    """A POSIX absolute path must be refused on every platform.
+
+    The original assertion used `C:/Windows/System32/...`, which passed on Windows and failed on
+    Linux: there `Path("C:/...")` is not absolute, and the string's parts contain no `..`, so it was
+    treated as an ordinary relative path and resolved inside the artifact root. The property being
+    tested is "an absolute path is refused", and only a platform-native absolute path tests it
+    everywhere. Both forms are asserted so neither can regress on the other platform.
+    """
+    with pytest.raises(ArtifactIndexError):
+        resolve_artifact_path(root=ARTIFACTS_ROOT, relative=str(Path("/etc/passwd")))
+
+
+def test_windows_absolute_path_is_rejected() -> None:
+    """The Windows form, asserted separately because it is not absolute on POSIX."""
     with pytest.raises(ArtifactIndexError):
         resolve_artifact_path(root=ARTIFACTS_ROOT, relative="C:/Windows/System32/drivers/etc/hosts")
+
+
+def test_a_drive_relative_path_cannot_escape_the_root(tmp_path: Path) -> None:
+    """A path that is neither absolute nor contains `..` must still resolve inside the root.
+
+    `C:/logs/application.log` is absolute on Windows and so is rejected by the absolute check -
+    asserted separately above. The genuinely drive-relative form is `C:logs/x.log`, which `Path`
+    reports as *not* absolute while still carrying a drive. That is the input the containment check
+    exists for, and asserting it here pins the behaviour on the platform where the distinction is
+    real rather than skipping it.
+    """
+    if Path("C:logs/x.log").drive == "":
+        pytest.skip("drive-relative paths only exist on Windows")
+    resolved = resolve_artifact_path(root=tmp_path, relative="C:logs/x.log")
+    assert is_within(root=tmp_path, candidate=resolved)
 
 
 def test_parent_traversal_is_rejected() -> None:

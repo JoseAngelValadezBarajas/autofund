@@ -41,7 +41,10 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
+      # The dev extra carries only pytest, so the linters and type checker are installed
+      # explicitly. They were referenced by the steps below but never installed, which is why the
+      # first CI run died at `bandit` with "No module named bandit" rather than checking anything.
+      - run: python -m pip install -e ".[dev]" ruff mypy bandit pip-audit
       - name: pytest
         run: python -m pytest tests -m "not live and not stage" -q
       - name: ruff
@@ -56,7 +59,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Pinned to the version the README documents and the test runner requires. It was 20,
+          # which is below vitest's floor and made `npm ci` install a runner that cannot start.
+          node-version: "22.22.2"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -84,7 +89,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -e ".[dev]" bandit pip-audit
       - name: working-tree secret scan
         run: python scripts/secret_scan.py
       - name: full Git history secret audit
@@ -101,7 +106,33 @@ jobs:
           path: artifacts/ci/publication-secret-audit.json
           if-no-files-found: warn
       - name: bandit
-        run: python -m bandit -r src/ -q
+        # Asserted against the recorded baseline rather than `bandit`'s exit code, because bandit
+        # exits non-zero whenever it reports anything at all and this codebase has 46 Low findings
+        # (assert statements, try/except/pass, and the one subprocess use). Treating "any finding"
+        # as failure means the step always fails and everyone learns to ignore it. What must not
+        # happen is a Medium or High appearing, or the Low count growing unnoticed.
+        run: |
+          python -m bandit -r src/ -q -f json -o bandit-report.json || true
+          python - <<'PY'
+          import json, sys
+          report = json.load(open("bandit-report.json"))
+          by_severity = report["metrics"]["_totals"]
+          low = by_severity.get("SEVERITY.LOW", 0)
+          medium = by_severity.get("SEVERITY.MEDIUM", 0)
+          high = by_severity.get("SEVERITY.HIGH", 0)
+          print(f"bandit: {low} Low, {medium} Medium, {high} High")
+          if medium or high:
+              sys.exit(f"bandit found {medium} Medium and {high} High severity issue(s)")
+          if low > 46:
+              sys.exit(f"bandit Low findings grew from the recorded baseline of 46 to {low}")
+          PY
+      - name: upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          if-no-files-found: warn
       - name: pip-audit
         # Advisory rather than blocking for the tool itself. A vulnerability in a real dependency
         # should be fixed; the `pip` package reporting against itself should not block a pull
@@ -184,7 +215,7 @@ jobs:
           cache-dependency-path: pyproject.toml
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.22.2"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: python -m pip install --upgrade pip

@@ -485,6 +485,77 @@ def test_documented_python_version_matches_the_package_requirement() -> None:
             f"{major}.{minor}")
 
 
+def test_ci_installs_the_tools_it_runs() -> None:
+    """A CI step that runs a tool must install it.
+
+    The first CI run failed at `bandit` with "No module named bandit", because the workflow invoked
+    bandit, ruff and mypy while installing only `.[dev]`, which contains pytest alone. Every one of
+    those steps had been passing locally purely because the tools were already present in the
+    developer's virtualenv - the workflow had never been executed.
+    """
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    # The tools are referenced as `python -m <module>`, and the module name is not always the
+    # distribution name: `pip-audit` installs the module `pip_audit`. Mapping them explicitly is the
+    # difference between this check working and it reporting a false gap.
+    invoked = set(re.findall(r"python -m ([a-z_]+)", workflow))
+    distributions = {"bandit": "bandit", "mypy": "mypy", "ruff": "ruff", "pip_audit": "pip-audit"}
+    checked = 0
+    for tool in sorted(invoked):
+        package = distributions.get(tool)
+        if package is None:
+            continue
+        checked += 1
+        assert re.search(rf"pip install[^\n]*\b{re.escape(package)}\b", workflow), (
+            f"the workflow runs `python -m {tool}` but never installs {package!r}")
+    assert checked >= 4, f"only checked {checked} tools; the workflow shape may have changed"
+    # pytest and the package itself must be installed too.
+    assert re.search(r"pip install[^\n]*\.\[dev\]", workflow), (
+        "the workflow never installs the package with its dev extra")
+
+
+def test_documented_node_version_satisfies_the_frontend_toolchain() -> None:
+    """The README and CI must name a Node version the test runner can actually start on.
+
+    The README said "Node 20+" and CI pinned `node-version: "20"`. Both were below the floor
+    declared by the locked toolchain - `vitest 5` requires Node ^22.12.0 and `jsdom 30` requires
+    ^22.22.2 - so `npm ci` succeeded and `vitest run` then failed to spawn a worker with
+    "webidl.util.markAsUncloneable is not a function". It passed locally because this machine runs
+    Node 24, and the documented requirement was never checked against the lockfile.
+    """
+    lock = json.loads((REPO_ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
+    floors: list[tuple[str, tuple[int, ...]]] = []
+    for name in ("vitest", "jsdom"):
+        entry = lock["packages"].get(f"node_modules/{name}", {})
+        engines = entry.get("engines", {})
+        spec = engines.get("node", "")
+        match = re.search(r"\^(\d+)\.(\d+)\.(\d+)", spec)
+        if match:
+            floors.append((name, tuple(int(part) for part in match.groups())))
+    assert floors, "could not read a Node floor from the lockfile; the check would be vacuous"
+
+    required = max(tuple(version) for _, version in floors)
+
+    def version_from_text(text: str, pattern: str) -> tuple[int, ...] | None:
+        found = re.search(pattern, text)
+        return tuple(int(part) for part in found.groups()) if found else None
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    documented = version_from_text(readme, r"Node\.js (\d+)\.(\d+)\.(\d+)")
+    assert documented is not None, "the README does not state a Node.js version"
+    assert documented >= required, (
+        f"the README documents Node {'.'.join(map(str, documented))} but the locked toolchain "
+        f"requires at least {'.'.join(map(str, required))}")
+
+    workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for pinned in re.findall(r'node-version:\s*"([^"]+)"', workflow):
+        parts = re.match(r"(\d+)\.(\d+)\.(\d+)", pinned)
+        assert parts, f"the workflow pins a Node version that is not fully specified: {pinned!r}"
+        pinned_version = tuple(int(part) for part in parts.groups())
+        assert pinned_version >= required, (
+            f"CI pins Node {pinned} but the locked toolchain requires at least "
+            f"{'.'.join(map(str, required))}")
+
+
 def test_metadata_declares_the_same_license_as_the_license_file() -> None:
     """Package metadata and the license file disagreeing is a real defect for a consumer."""
     import tomllib

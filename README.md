@@ -25,8 +25,12 @@ FRESH CLONE → INSTALL → DEMO MODE → RESEARCH CONTROL CENTER
 
 ## Quick start
 
-Requires **Python 3.12+** and **Node.js 20+**. No exchange account, no credentials and no network
+Requires **Python 3.12+** and **Node.js 22.22.2+**. No exchange account, no credentials and no network
 access to any exchange. The build needs `setuptools>=77.0.1`, which `pip` fetches automatically.
+
+Node 22.22.2 is a real floor rather than a preference: the frontend test runner (`vitest`) and the
+DOM implementation (`jsdom`) both refuse to start on older releases, so `npm ci` followed by
+`npx vitest run` fails on Node 20 even though the build itself would work.
 
 ### Windows (PowerShell)
 
