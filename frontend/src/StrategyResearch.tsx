@@ -142,6 +142,48 @@ export interface AsymmetryResearchView {
   capital_limits_changed:boolean;
 }
 
+export interface AlphaResearchView {
+  question:string;
+  alpha_is_information_not_pnl:boolean;
+  price_only_baseline_label:string;
+  price_only_baseline_frozen:boolean;
+  frozen_price_only_profiles:number;
+  new_price_only_strategy_implemented:boolean;
+  source_families:string[];
+  predeclared_features:string[];
+  feature_interpretation:Record<string,string>;
+  predeclared_relationships:string[][];
+  predeclared_horizons_minutes:number[];
+  predeclared_markout_seconds:number[];
+  max_feature_families:number;
+  max_relationships:number;
+  parameters_declared_before_results:boolean;
+  multiple_testing_budget_enforced:boolean;
+  negative_controls:string[];
+  negative_controls_run_on_every_measurement:boolean;
+  positive_control_required_for_a_verdict:boolean;
+  undetectable_measurements_reported_as_unmeasurable:boolean;
+  verdicts:string[];
+  classifications:string[];
+  terminal_statuses:string[];
+  development_only_during_discovery:boolean;
+  validation_read_only_after_freeze:boolean;
+  holdout_preserved:boolean;
+  holdout_consumed:boolean;
+  no_future_structure:boolean;
+  discovery_pipeline_may_report_absence:boolean;
+  gate_can_override_economic_guard:boolean;
+  gate_can_override_risk_engine:boolean;
+  gate_can_override_risk_policy:boolean;
+  new_strategy_implemented:boolean;
+  maker_authorised:boolean;
+  verdict:string|null;
+  verdict_pending_frozen_experiment:boolean;
+  drawdown_policy_changed:boolean;
+  risk_engine_changed:boolean;
+  capital_limits_changed:boolean;
+}
+
 export interface StrategyResearchView {
   research_version:string;
   promotion:string;
@@ -168,6 +210,7 @@ export interface StrategyResearchView {
   horizon_research?:HorizonResearchView;
   microstructure_capture?:MicrostructureCaptureView;
   asymmetry_research?:AsymmetryResearchView;
+  alpha_research?:AlphaResearchView;
 }
 
 /** Shadow rows carry whichever fields the pipeline produced; read them defensively. */
@@ -239,7 +282,8 @@ function ShadowTable({rows}:{rows:ShadowRow[]}){
       <thead><tr><th>Market</th><th>Profiles</th><th>Evaluations</th><th>Signals</th>
         <th>Shadow trades</th><th>Gross P&amp;L</th><th>Fees / friction</th><th>Net P&amp;L</th>
         <th>Drawdown</th><th>Economic reject rate</th><th>Data source</th><th>Evidence</th></tr></thead>
-      <tbody>{rows.map((row,index)=><tr key={String(row.market??index)}>
+      <tbody>{rows.map((row,index)=><tr key={String(row.market??index)}
+        data-shadow-market={text(row.market)}>
         <td>{text(row.market)}</td>
         <td>{(row.profiles as unknown[]|undefined)?.length??0}</td>
         <td>{text(row.evaluations, '0')}</td>
@@ -615,6 +659,137 @@ function AsymmetryPanel({research}:{research:StrategyResearchView}){
   </>;
 }
 
+/**
+ * Independent alpha-source research (MVP 0.2.6). The question here is deliberately not "does
+ * another indicator help" but "does any independent information source exist at all". Alpha
+ * means information with predictive content, not profit, and the panel keeps those separate: a
+ * real signal too small to pay 173 bps of friction must be reported as real *and* as too small,
+ * rather than quietly promoted to an edge or quietly dropped for being unprofitable.
+ *
+ * The honest-null machinery is shown rather than summarised, because a discovery pipeline that
+ * always finds alpha is broken.
+ */
+function AlphaPanel({research}:{research:StrategyResearchView}){
+  const alpha=research.alpha_research;
+  if(!alpha)return null;
+  return <>
+    <h3>Independent alpha-source research</h3>
+    <p>{alpha.question}. Parameters, controls and horizons were declared before any result was
+      seen, and the injected-leak control is a precondition for a verdict: a measurement that
+      cannot detect the outcome itself has no resolution, so its result is unmeasurable rather
+      than negative. The chronological holdout is preserved and was not consumed.</p>
+    <div className="table"><table><tbody>
+      <tr><th>Alpha is information, not PnL</th>
+        <td data-alpha-information-not-pnl={alpha.alpha_is_information_not_pnl}>
+          {alpha.alpha_is_information_not_pnl?'YES':'NO'}</td></tr>
+      <tr><th>Price-only baseline</th>
+        <td data-alpha-price-only-frozen={alpha.price_only_baseline_frozen}>
+          {alpha.price_only_baseline_label}
+          {alpha.price_only_baseline_frozen?' (FROZEN)':''}</td></tr>
+      <tr><th>Frozen price-only profiles</th>
+        <td data-alpha-frozen-profiles={alpha.frozen_price_only_profiles}>
+          {alpha.frozen_price_only_profiles}</td></tr>
+      <tr><th>New price-only strategy implemented</th>
+        <td data-alpha-new-price-only={alpha.new_price_only_strategy_implemented}>
+          {alpha.new_price_only_strategy_implemented?'YES':'NO'}</td></tr>
+      <tr><th>Source families</th>
+        <td data-alpha-families={alpha.source_families.join(',')}>
+          {alpha.source_families.join(', ')}</td></tr>
+      <tr><th>Predeclared feature families</th>
+        <td data-alpha-features={alpha.predeclared_features.join(',')}>
+          {alpha.predeclared_features.length} of at most {alpha.max_feature_families}</td></tr>
+      <tr><th>Predeclared relationships</th>
+        <td data-alpha-relationships={alpha.predeclared_relationships.length}>
+          {alpha.predeclared_relationships.length} of at most {alpha.max_relationships}</td></tr>
+      <tr><th>Predeclared horizons</th>
+        <td data-alpha-horizons={alpha.predeclared_horizons_minutes.join(',')}>
+          {alpha.predeclared_horizons_minutes.join(', ')} minutes</td></tr>
+      <tr><th>Predeclared markouts</th>
+        <td data-alpha-markouts={alpha.predeclared_markout_seconds.join(',')}>
+          {alpha.predeclared_markout_seconds.join(', ')} seconds</td></tr>
+      <tr><th>Parameters declared before results</th>
+        <td data-alpha-declared-first={alpha.parameters_declared_before_results}>
+          {alpha.parameters_declared_before_results?'YES':'NO'}</td></tr>
+      <tr><th>Multiple-testing budget enforced</th>
+        <td data-alpha-multiplicity={alpha.multiple_testing_budget_enforced}>
+          {alpha.multiple_testing_budget_enforced?'YES':'NO'}</td></tr>
+      <tr><th>Negative controls</th>
+        <td data-alpha-controls={alpha.negative_controls.join(',')}>
+          {alpha.negative_controls.join(', ')}</td></tr>
+      <tr><th>Controls on every measurement</th>
+        <td data-alpha-controls-always={alpha.negative_controls_run_on_every_measurement}>
+          {alpha.negative_controls_run_on_every_measurement?'YES':'NO'}</td></tr>
+      <tr><th>Positive control required for a verdict</th>
+        <td data-alpha-positive-control={alpha.positive_control_required_for_a_verdict}>
+          {alpha.positive_control_required_for_a_verdict?'YES':'NO'}</td></tr>
+      <tr><th>Blind measurements reported as unmeasurable</th>
+        <td data-alpha-blind-unmeasurable={alpha.undetectable_measurements_reported_as_unmeasurable}>
+          {alpha.undetectable_measurements_reported_as_unmeasurable?'YES':'NO'}</td></tr>
+      <tr><th>Discovery reads development only</th>
+        <td data-alpha-development-only={alpha.development_only_during_discovery}>
+          {alpha.development_only_during_discovery?'YES':'NO'}</td></tr>
+      <tr><th>Validation read only after freeze</th>
+        <td data-alpha-validation-after-freeze={alpha.validation_read_only_after_freeze}>
+          {alpha.validation_read_only_after_freeze?'YES':'NO'}</td></tr>
+      <tr><th>Holdout preserved</th>
+        <td data-alpha-holdout-preserved={alpha.holdout_preserved}>
+          {alpha.holdout_preserved?'YES':'NO'}</td></tr>
+      <tr><th>Holdout consumed</th>
+        <td data-alpha-holdout-consumed={alpha.holdout_consumed}>
+          {alpha.holdout_consumed?'YES':'NO'}</td></tr>
+      <tr><th>Structure uses only past data</th>
+        <td data-alpha-no-future-structure={alpha.no_future_structure}>
+          {alpha.no_future_structure?'YES':'NO'}</td></tr>
+      <tr><th>Pipeline may report absence</th>
+        <td data-alpha-may-report-absence={alpha.discovery_pipeline_may_report_absence}>
+          {alpha.discovery_pipeline_may_report_absence?'YES':'NO'}</td></tr>
+      <tr><th>Can override EconomicEdgeGuard</th>
+        <td data-alpha-overrides-economic={alpha.gate_can_override_economic_guard}>
+          {alpha.gate_can_override_economic_guard?'YES':'NO'}</td></tr>
+      <tr><th>Can override RiskEngine</th>
+        <td data-alpha-overrides-risk={alpha.gate_can_override_risk_engine}>
+          {alpha.gate_can_override_risk_engine?'YES':'NO'}</td></tr>
+      <tr><th>Can widen risk policy</th>
+        <td data-alpha-overrides-policy={alpha.gate_can_override_risk_policy}>
+          {alpha.gate_can_override_risk_policy?'YES':'NO'}</td></tr>
+      <tr><th>New strategy implemented</th>
+        <td data-alpha-new-strategy={alpha.new_strategy_implemented}>
+          {alpha.new_strategy_implemented?'YES':'NO'}</td></tr>
+      <tr><th>Maker authorised</th>
+        <td data-alpha-maker-authorised={alpha.maker_authorised}>
+          {alpha.maker_authorised?'YES':'NO'}</td></tr>
+      <tr><th>RiskEngine changed</th>
+        <td data-alpha-risk-changed={alpha.risk_engine_changed}>
+          {alpha.risk_engine_changed?'YES':'NO'}</td></tr>
+      <tr><th>Drawdown policy changed</th>
+        <td data-alpha-drawdown-changed={alpha.drawdown_policy_changed}>
+          {alpha.drawdown_policy_changed?'YES':'NO'}</td></tr>
+      <tr><th>Verdict</th>
+        <td data-alpha-verdict-pending={alpha.verdict_pending_frozen_experiment}>
+          {alpha.verdict??'PENDING FROZEN EXPERIMENT'}</td></tr>
+    </tbody></table></div>
+
+    <h4>Predeclared feature families</h4>
+    <div className="table"><table>
+      <thead><tr><th>Feature</th><th>What it measures</th></tr></thead>
+      <tbody>{alpha.predeclared_features.map(name=><tr key={name} data-alpha-feature={name}>
+        <td><code>{name}</code></td>
+        <td>{text(alpha.feature_interpretation[name])}</td>
+      </tr>)}</tbody></table></div>
+
+    <h4>Predeclared lead-lag relationships</h4>
+    <div className="table"><table>
+      <thead><tr><th>Leader</th><th>Follower</th></tr></thead>
+      <tbody>{alpha.predeclared_relationships.map((pair,index)=>
+        <tr key={`${pair[0]}-${pair[1]}-${index}`}>
+          <td>{pair[0]}</td><td>{pair[1]}</td></tr>)}
+      </tbody></table></div>
+
+    <p className="policy">Decidable outcomes: {alpha.terminal_statuses.join(', ')}.
+      Classifications: {alpha.classifications.join(', ')}. Verdicts: {alpha.verdicts.join(', ')}.</p>
+  </>;
+}
+
 export function StrategyResearchPage({research}:
   {research:StrategyResearchView|undefined|null}){
   if(!research)return <article>
@@ -652,6 +827,7 @@ export function StrategyResearchPage({research}:
     <HorizonPanel research={research}/>
     <MicrostructurePanel research={research}/>
     <AsymmetryPanel research={research}/>
+    <AlphaPanel research={research}/>
     <ShadowTable rows={research.shadow}/>
     <MarketTable research={research}/>
 

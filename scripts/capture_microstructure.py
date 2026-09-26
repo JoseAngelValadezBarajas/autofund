@@ -38,6 +38,13 @@ ROOT = Path(__file__).resolve().parents[1] / "artifacts/mvp/horizon-microstructu
 CAPTURE_ROOT = ROOT / "microstructure"
 REPORT = ROOT / "microstructure-capture.json"
 
+# A second, additive capture root (MVP 0.2.6). Kept separate rather than appended to the
+# 0.2.4 evidence so that milestone's artifact remains byte-identical to what it certified.
+# Microstructure evidence is cumulative: more of it is strictly better, which is why extending
+# capture is the right response to an under-powered dataset rather than relaxing a requirement.
+ALPHA_CAPTURE_ROOT = (Path(__file__).resolve().parents[1]
+                      / "artifacts/mvp/alpha/microstructure")
+
 DEFAULT_BOOKS = ("btc_mxn", "eth_mxn", "sol_mxn", "xrp_mxn")
 DEFAULT_INTERVAL_SECONDS = 5
 
@@ -62,6 +69,8 @@ def main() -> int:
     parser.add_argument("--books", nargs="*", default=list(DEFAULT_BOOKS))
     parser.add_argument("--depth-levels", type=int, default=DEFAULT_DEPTH_LEVELS)
     parser.add_argument("--retention-hours", type=int, default=None)
+    parser.add_argument("--root", type=str, default=None,
+                        help="capture root; defaults to the 0.2.4 evidence directory")
     args = parser.parse_args()
 
     if args.seconds <= 0:
@@ -69,12 +78,13 @@ def main() -> int:
     if args.interval <= 0:
         raise SystemExit("capture interval must be positive")
 
-    ROOT.mkdir(parents=True, exist_ok=True)
+    capture_root = Path(args.root) if args.root else CAPTURE_ROOT
+    capture_root.mkdir(parents=True, exist_ok=True)
     client = production_client()
 
     kwargs = {} if args.retention_hours is None else {
         "retention_hours": args.retention_hours}
-    store = MicrostructureStore(root=CAPTURE_ROOT, **kwargs)
+    store = MicrostructureStore(root=capture_root, **kwargs)
     books = resolve_books(client, tuple(args.books))
     collector = build_collector(client=client, store=store, books=books,
                                depth_levels=args.depth_levels)
@@ -103,7 +113,9 @@ def main() -> int:
         "adverse_selection_analysis_possible": quality["events_stored"] > len(books),
         "anomalies_repaired": 0,
     }
-    REPORT.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    report_path = capture_root.parent / "microstructure-capture.json"
+    report_path.write_text(json.dumps(payload, indent=2, default=str) + "\n",
+                           encoding="utf-8")
     print(json.dumps({"capture_passes": passes, "quality": quality,
                       "books": list(books)}, indent=2))
     return 0

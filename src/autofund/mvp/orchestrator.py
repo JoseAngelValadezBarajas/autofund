@@ -31,7 +31,7 @@ AUTHORIZED_CAPITAL = Decimal("50")
 MAX_DEPLOYMENT = Decimal("25")
 SINGLE_ORDER_CAP = Decimal("11")
 PREFLIGHT_PASS, PREFLIGHT_FAIL, PREFLIGHT_NOT_RUN = "PASS", "FAIL", "NOT_RUN"
-PRODUCT_VERSION = "AutoFund MVP 0.2.5"
+PRODUCT_VERSION = "AutoFund MVP 0.2.6"
 
 # Canonical stop reasons. The backend is authoritative; the UI never infers a
 # reason from elapsed time.
@@ -1338,6 +1338,24 @@ class AutoFundOrchestrator:
         The champion's own economic verdict is computed here so an operator can see
         *why* its BUYs are refused at the real fee, rather than inferring it.
         """
+        from .alpha_controls import ALPHA_CONTROLS
+        from .alpha_discovery import (
+            FROZEN_PRICE_ONLY_PROFILES,
+            INSUFFICIENT_EVIDENCE,
+            INSUFFICIENT_SAMPLE,
+            MAX_FEATURE_FAMILIES,
+            MAX_RELATIONSHIPS,
+            MICROSTRUCTURE_ACCUMULATING,
+            NO_SIGNAL,
+            NOT_PREDICTIVE,
+            PREDECLARED_HORIZONS_MINUTES,
+            PREDICTIVE,
+            PREDICTIVE_NOT_ECONOMIC,
+            PRICE_ONLY_RESEARCH_BASELINE,
+            TERMINAL_STATUSES,
+            VALIDATED_ALPHA_SOURCE,
+            WEAK_UNSTABLE_SIGNAL,
+        )
         from .asymmetric_challengers import (
             asymmetric_challenger_ids,
             asymmetric_challengers,
@@ -1356,6 +1374,10 @@ class AutoFundOrchestrator:
             friction_bps_for,
         )
         from .challenger_research import CONFIG_SETS, SELECTION_RULE
+        from .cross_market import FEATURE_INTERPRETATION, PREDECLARED_FEATURES
+        from .cross_market import (
+            PREDECLARED_RELATIONSHIPS as CROSS_MARKET_RELATIONSHIPS,
+        )
         from .economics import DEFAULT_POLICY
         from .execution_gap import MISSING, PARTIAL, PRESENT, architecture_gap
         from .horizon import PREDECLARED_TIMEFRAMES
@@ -1373,6 +1395,7 @@ class AutoFundOrchestrator:
             REAL_CAPTURED_MICROSTRUCTURE,
             STOPPED,
         )
+        from .microstructure_alpha import PREDECLARED_MARKOUT_SECONDS
         from .passive_execution import (
             CANDLE_ONLY_UNCERTAIN,
             execution_modes,
@@ -1584,6 +1607,58 @@ class AutoFundOrchestrator:
                 "gate_can_override_risk_engine": False,
                 "gate_can_override_risk_policy": False,
                 "no_future_structure": True,
+                "verdict": None,
+                "verdict_pending_frozen_experiment": True,
+                "drawdown_policy_changed": False,
+                "risk_engine_changed": False,
+                "capital_limits_changed": False,
+            },
+            # Independent alpha-source research (MVP 0.2.6). The question changed here: not
+            # whether another indicator helps, but whether *any* independent information
+            # source exists at all. Alpha means information with predictive content, not
+            # profit, and the two are reported separately so a real signal too small to pay
+            # 173 bps of friction cannot be mistaken for an edge or hidden by one.
+            "alpha_research": {
+                "question": ("does an independent information source exist with measurable "
+                             "predictive content, before another strategy is written"),
+                "alpha_is_information_not_pnl": True,
+                "price_only_baseline_label": PRICE_ONLY_RESEARCH_BASELINE,
+                "price_only_baseline_frozen": True,
+                "frozen_price_only_profiles": len(FROZEN_PRICE_ONLY_PROFILES),
+                "new_price_only_strategy_implemented": False,
+                "source_families": ["CROSS_MARKET_LEAD_LAG",
+                                    "MARKET_MICROSTRUCTURE_ORDER_FLOW"],
+                "predeclared_features": list(PREDECLARED_FEATURES),
+                "feature_interpretation": {name: FEATURE_INTERPRETATION[name]
+                                           for name in PREDECLARED_FEATURES},
+                "predeclared_relationships": [list(pair)
+                                              for pair in CROSS_MARKET_RELATIONSHIPS],
+                "predeclared_horizons_minutes": list(PREDECLARED_HORIZONS_MINUTES),
+                "predeclared_markout_seconds": list(PREDECLARED_MARKOUT_SECONDS),
+                "max_feature_families": MAX_FEATURE_FAMILIES,
+                "max_relationships": MAX_RELATIONSHIPS,
+                "parameters_declared_before_results": True,
+                "multiple_testing_budget_enforced": True,
+                "negative_controls": list(ALPHA_CONTROLS),
+                "negative_controls_run_on_every_measurement": True,
+                "positive_control_required_for_a_verdict": True,
+                "undetectable_measurements_reported_as_unmeasurable": True,
+                "verdicts": [PREDICTIVE, NOT_PREDICTIVE, INSUFFICIENT_SAMPLE],
+                "classifications": [NO_SIGNAL, WEAK_UNSTABLE_SIGNAL,
+                                    PREDICTIVE_NOT_ECONOMIC, VALIDATED_ALPHA_SOURCE,
+                                    MICROSTRUCTURE_ACCUMULATING, INSUFFICIENT_EVIDENCE],
+                "terminal_statuses": list(TERMINAL_STATUSES),
+                "development_only_during_discovery": True,
+                "validation_read_only_after_freeze": True,
+                "holdout_preserved": True,
+                "holdout_consumed": False,
+                "no_future_structure": True,
+                "discovery_pipeline_may_report_absence": True,
+                "gate_can_override_economic_guard": False,
+                "gate_can_override_risk_engine": False,
+                "gate_can_override_risk_policy": False,
+                "new_strategy_implemented": False,
+                "maker_authorised": False,
                 "verdict": None,
                 "verdict_pending_frozen_experiment": True,
                 "drawdown_policy_changed": False,

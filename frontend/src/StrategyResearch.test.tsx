@@ -4,7 +4,7 @@ import {MvpApp} from './MvpApp';
 
 class Events {addEventListener(){} close(){}}
 
-const stopped:any={product_version:'AutoFund MVP 0.2.5',demo_mode:true,app_state:'STOPPED',auto_execution:false,
+const stopped:any={product_version:'AutoFund MVP 0.2.6',demo_mode:true,app_state:'STOPPED',auto_execution:false,
  session_id:null,cash_mxn:'50',equity_mxn:'50',deployed_mxn:'0',market_quality:'VALID',accounting_status:'PASS',
  risk_status:'NORMAL',connected:true,kill_triggered:false,position:null,last_signal:'NO_SIGNAL',orders:0,fills:0,
  realized_pnl_mxn:'0',fees_mxn:'0',telemetry:[],champion:{profile_id:'mean-reversion-safe',strategy_id:'mean_reversion',
@@ -172,6 +172,42 @@ const research:any={research_version:'autofund.production-market-selector.v1',
   gate_is_research_only:true,gate_can_override_economic_guard:false,
   gate_can_override_risk_engine:false,gate_can_override_risk_policy:false,
   no_future_structure:true,verdict:null,verdict_pending_frozen_experiment:true,
+  drawdown_policy_changed:false,risk_engine_changed:false,capital_limits_changed:false},
+ alpha_research:{question:'does an independent information source exist with predictive content',
+  alpha_is_information_not_pnl:true,
+  price_only_baseline_label:'PRICE_ONLY_RESEARCH_BASELINE',
+  price_only_baseline_frozen:true,frozen_price_only_profiles:25,
+  new_price_only_strategy_implemented:false,
+  source_families:['CROSS_MARKET_LEAD_LAG','MARKET_MICROSTRUCTURE_ORDER_FLOW'],
+  predeclared_features:['LAGGED_RETURN','RELATIVE_RETURN_VS_BASKET',
+   'CROSS_SECTIONAL_DISPERSION','LEADER_FOLLOWER_DIVERGENCE',
+   'VOLATILITY_ADJUSTED_RELATIVE_MOVE','MARKET_BREADTH'],
+  feature_interpretation:{LAGGED_RETURN:'a leader market return over the preceding bar',
+   RELATIVE_RETURN_VS_BASKET:'a market return relative to the equally weighted basket',
+   CROSS_SECTIONAL_DISPERSION:'dispersion of returns across the tracked markets',
+   LEADER_FOLLOWER_DIVERGENCE:'how far a follower has diverged from its leader',
+   VOLATILITY_ADJUSTED_RELATIVE_MOVE:'relative move scaled by recent volatility',
+   MARKET_BREADTH:'share of tracked markets moving in the same direction'},
+  predeclared_relationships:[['BTC/MXN','ETH/MXN'],['BTC/MXN','SOL/MXN'],
+   ['BTC/MXN','XRP/MXN'],['ETH/MXN','SOL/MXN']],
+  predeclared_horizons_minutes:[1,5,15],predeclared_markout_seconds:[5,30,60],
+  max_feature_families:6,max_relationships:12,
+  parameters_declared_before_results:true,multiple_testing_budget_enforced:true,
+  negative_controls:['TIME_SHUFFLED','RANDOMISED_PAIRING','FUTURE_LEAK','SIGN_INVERSION'],
+  negative_controls_run_on_every_measurement:true,
+  positive_control_required_for_a_verdict:true,
+  undetectable_measurements_reported_as_unmeasurable:true,
+  verdicts:['PREDICTIVE','NOT_PREDICTIVE','INSUFFICIENT_SAMPLE'],
+  classifications:['NO_SIGNAL','WEAK_UNSTABLE_SIGNAL','PREDICTIVE_NOT_ECONOMIC',
+   'VALIDATED_ALPHA_SOURCE','MICROSTRUCTURE_ACCUMULATING','INSUFFICIENT_EVIDENCE'],
+  terminal_statuses:['VALIDATED_ALPHA_SOURCE_FOUND','PREDICTIVE_BUT_NOT_ECONOMIC',
+   'MICROSTRUCTURE_ACCUMULATING','NO_ALPHA_SOURCE_FOUND','INSUFFICIENT_EVIDENCE','BLOCKED'],
+  development_only_during_discovery:true,validation_read_only_after_freeze:true,
+  holdout_preserved:true,holdout_consumed:false,no_future_structure:true,
+  discovery_pipeline_may_report_absence:true,
+  gate_can_override_economic_guard:false,gate_can_override_risk_engine:false,
+  gate_can_override_risk_policy:false,new_strategy_implemented:false,
+  maker_authorised:false,verdict:null,verdict_pending_frozen_experiment:true,
   drawdown_policy_changed:false,risk_engine_changed:false,capital_limits_changed:false}};
 
 beforeEach(()=>{vi.stubGlobal('EventSource',Events);vi.stubGlobal('fetch',vi.fn().mockResolvedValue({json:async()=>({control_token:'token'})}))});
@@ -211,7 +247,11 @@ test('shadow research is reported per market with friction separated from net',(
  render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
  openProfiles();
  expect(screen.getByText('Shadow research per market')).toBeTruthy();
- expect(screen.getByText('BTC/MXN')).toBeTruthy();
+ // Scoped to the shadow row: market codes also appear in the predeclared alpha relationships
+ // table, so a page-wide match would be ambiguous rather than wrong.
+ const row=document.querySelector('[data-shadow-market="BTC/MXN"]');
+ expect(row).toBeTruthy();
+ expect(row?.textContent).toContain('BTC/MXN');
  expect(screen.getByText('156')).toBeTruthy();
  expect(screen.getByText('0.80')).toBeTruthy();
  expect(screen.getByText('CAPTURED_MARKET_DATA')).toBeTruthy();
@@ -474,4 +514,95 @@ test('each asymmetric challenger reports its concept, timeframe and risk cap',()
  const hourly=Array.from(rows)
    .filter(row=>row.getAttribute('data-asym-profile')?.includes('-1h-'));
  expect(hourly.length).toBe(1);
+});
+
+test('alpha research is shown with the frozen price-only baseline and no new strategy',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(screen.getByText('Independent alpha-source research')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-price-only-frozen="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-new-strategy="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-new-price-only="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-maker-authorised="false"]')).toBeTruthy();
+});
+
+test('alpha is declared as information rather than profit',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ // The milestone asks whether information exists and separately whether it could pay. A page
+ // that collapsed the two would let a real but unprofitable signal read as an edge.
+ expect(document.querySelector('[data-alpha-information-not-pnl="true"]')).toBeTruthy();
+});
+
+test('the discovery parameters are predeclared within their budgets',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-alpha-declared-first="true"]')).toBeTruthy();
+ const features=document.querySelector('[data-alpha-features]');
+ expect(features).toBeTruthy();
+ expect(features?.textContent).toContain('6 of at most 6');
+ const relationships=document.querySelector('[data-alpha-relationships="4"]');
+ expect(relationships).toBeTruthy();
+ expect(relationships?.textContent).toContain('4 of at most 12');
+ expect(document.querySelector('[data-alpha-multiplicity="true"]')).toBeTruthy();
+});
+
+test('the injected-leak control is a precondition for any verdict',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ // A measurement that cannot detect the outcome itself has no resolution; its result must be
+ // unmeasurable rather than negative.
+ expect(document.querySelector('[data-alpha-positive-control="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-blind-unmeasurable="true"]')).toBeTruthy();
+ const controls=document.querySelector('[data-alpha-controls]');
+ expect(controls?.textContent).toContain('FUTURE_LEAK');
+ expect(controls?.textContent).toContain('SIGN_INVERSION');
+});
+
+test('the chronological holdout is preserved and was not consumed',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-alpha-holdout-preserved="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-holdout-consumed="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-development-only="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-validation-after-freeze="true"]')).toBeTruthy();
+});
+
+test('the alpha gate cannot override the economic guard, risk engine or policy',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ expect(document.querySelector('[data-alpha-overrides-economic="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-overrides-risk="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-overrides-policy="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-risk-changed="false"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-drawdown-changed="false"]')).toBeTruthy();
+});
+
+test('the alpha verdict is withheld until the frozen experiment runs',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const pending=document.querySelector('[data-alpha-verdict-pending="true"]');
+ expect(pending).toBeTruthy();
+ // Scoped to the cell: the horizon, asymmetry and alpha experiments all withhold a verdict, so
+ // a page-wide string match would be ambiguous.
+ expect(pending?.textContent).toContain('PENDING FROZEN EXPERIMENT');
+});
+
+test('every predeclared alpha feature family is shown with its interpretation',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ const rows=document.querySelectorAll('[data-alpha-feature]');
+ expect(rows.length).toBe(6);
+ for(const name of ['LAGGED_RETURN','MARKET_BREADTH','LEADER_FOLLOWER_DIVERGENCE'])
+   expect(document.querySelector(`[data-alpha-feature="${name}"]`)).toBeTruthy();
+ expect(rows[0].textContent).toContain('leader market return');
+});
+
+test('the pipeline is declared able to report an absence of alpha',()=>{
+ render(<MvpApp initial={{...stopped,strategy_research:research}}/>);
+ openProfiles();
+ // A discovery pipeline that always finds alpha is broken, so the ability to return a null
+ // must be a property of the contract rather than a hope about the data.
+ expect(document.querySelector('[data-alpha-may-report-absence="true"]')).toBeTruthy();
+ expect(document.querySelector('[data-alpha-no-future-structure="true"]')).toBeTruthy();
 });
