@@ -196,3 +196,60 @@ def test_each_journal_failure_gets_its_own_blocker_with_guidance(message, expect
 def test_the_migration_guidance_names_the_command():
     from autofund.mvp.session_types import BLOCKER_GUIDANCE
     assert "autofund secrets migrate-journal" in BLOCKER_GUIDANCE["LIVE_JOURNAL_NEEDS_MIGRATION"]
+
+
+# ---- the journal cannot be redirected to a different, empty directory ----
+
+def test_the_marker_is_keyed_by_the_configured_path_not_a_resolved_one(tmp_path):
+    from autofund import secrets_store
+    real, other = tmp_path / "live", tmp_path / "elsewhere"
+    real.mkdir()
+    other.mkdir()
+    name = secrets_store.journal_marker_name(real / "execution.jsonl")
+    assert name == secrets_store.journal_marker_name(tmp_path / "live" / ".." / "live" / "execution.jsonl")
+    assert name != secrets_store.journal_marker_name(other / "execution.jsonl")
+    # `resolve()` would follow a link; the configured path must not change when one is swapped in.
+    import inspect
+    assert "resolve()" not in inspect.getsource(secrets_store.journal_marker_name).split('"""')[-1]
+
+
+def test_a_linked_journal_path_is_refused(tmp_path, monkeypatch):
+    import os
+
+    from autofund.live.journal import journal_path_is_redirected
+    path = tmp_path / "a" / "live" / "execution.jsonl"
+    path.parent.mkdir(parents=True)
+    assert not journal_path_is_redirected(path)
+    real_islink = os.path.islink
+    monkeypatch.setattr(os.path, "islink", lambda p: str(p).endswith("live") or real_islink(p))
+    assert journal_path_is_redirected(path)
+    with pytest.raises(LiveError, match="LIVE_JOURNAL_PATH_REDIRECTED"):
+        LiveExecutionJournal(path)
+
+
+def test_redirecting_the_directory_to_an_empty_one_is_refused_for_real(tmp_path):
+    import os
+    real_dir, empty_dir = tmp_path / "live", tmp_path / "empty"
+    real_dir.mkdir()
+    empty_dir.mkdir()
+    journal = real_dir / "execution.jsonl"
+    write_live(journal, 3)
+    parked = tmp_path / "live-parked"
+    real_dir.rename(parked)
+    try:
+        os.symlink(empty_dir, real_dir, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create symlinks")
+    with pytest.raises(LiveError, match="LIVE_JOURNAL_PATH_REDIRECTED"):
+        LiveExecutionJournal(journal)  # not silently opened as a fresh journal
+
+
+def test_even_if_the_link_check_were_bypassed_the_marker_still_refuses_an_empty_journal(tmp_path):
+    """Defense in depth: the marker is keyed by the configured path, so a clean journal there is refused."""
+    path = tmp_path / "live" / "execution.jsonl"
+    path.parent.mkdir()
+    write_live(path, 3)
+    for stray in (path, anchor(path)):
+        stray.unlink()
+    with pytest.raises(Exception):
+        LiveExecutionJournal(path)

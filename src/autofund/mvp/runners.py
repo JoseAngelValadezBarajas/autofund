@@ -41,6 +41,8 @@ def journal_blocker_for(exc: BaseException) -> str:
     text = str(exc)
     if text == "LIVE_JOURNAL_NEEDS_MIGRATION":
         return "LIVE_JOURNAL_NEEDS_MIGRATION"  # an old journal: the operator migrates it on purpose
+    if text == "LIVE_JOURNAL_PATH_REDIRECTED":
+        return "EXECUTION_JOURNAL_INTEGRITY_FAILURE"  # a symlink/junction in the journal path
     if "already in use" in text:
         return "EXECUTION_JOURNAL_IN_USE"  # another AutoFund process owns the single-writer journal
     return "EXECUTION_JOURNAL_INTEGRITY_FAILURE"  # corrupt, truncated, or authentication stripped

@@ -228,7 +228,16 @@ def parse_env_file(text: str, names: Iterable[str] = KNOWN_NAMES) -> dict[str, s
 # credential store, which is out of reach of anyone who can only edit files in the journal directory.
 
 def journal_marker_name(journal_path: Path) -> str:
-    digest = hashlib.sha256(str(journal_path.resolve()).lower().encode()).hexdigest()[:24].upper()
+    """The marker is keyed by the path the application is *configured* to use, never a resolved one.
+
+    ``Path.resolve()`` follows symlinks and junctions, so redirecting the journal directory elsewhere
+    would change the key, hide the marker, and make an empty directory look like a brand-new journal.
+    The configured absolute path does not move when a link is swapped in underneath it, so a
+    redirected journal still finds its marker and is refused as missing. Case is folded only where the
+    filesystem itself ignores it (Windows).
+    """
+    identity = os.path.normcase(os.path.abspath(journal_path))
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:24].upper()
     return f"AUTOFUND_JOURNAL_STATE_{digest}"
 
 

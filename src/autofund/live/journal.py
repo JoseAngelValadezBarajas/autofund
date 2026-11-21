@@ -1,5 +1,6 @@
 """Live-only semantic boundary around the certified locking/fsync journal."""
 
+import os
 from pathlib import Path
 
 from autofund.exchanges.bitso.journal import ExecutionJournal, JournalMigrationRequired
@@ -7,6 +8,23 @@ from autofund.exchanges.bitso.journal import ExecutionJournal, JournalMigrationR
 from .models import LiveError
 
 DEFAULT_JOURNAL = Path(__file__).parents[3] / "artifacts" / "live" / "execution.jsonl"
+
+
+def journal_path_is_redirected(path: Path) -> bool:
+    """True if the journal, or any directory above it, is a symlink or a Windows junction.
+
+    A link in that position lets someone point the application at a different journal than the one
+    the operator configured. Refusing links outright is simpler and safer than trying to decide which
+    ones are benign.
+    """
+    current = os.path.abspath(path)
+    while True:
+        if os.path.islink(current) or os.path.isjunction(current):
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
 
 
 class _StoredAuthState:
@@ -39,6 +57,8 @@ class LiveExecutionJournal(ExecutionJournal):
         # on purpose with `autofund secrets migrate-journal`, which passes migrate=True.
         from autofund.secrets_store import journal_key
 
+        if journal_path_is_redirected(path):
+            raise LiveError("LIVE_JOURNAL_PATH_REDIRECTED")
         try:
             super().__init__(path, mac_key=journal_key() if authenticate else None,
                              auth_state=_StoredAuthState(path) if authenticate else None,
