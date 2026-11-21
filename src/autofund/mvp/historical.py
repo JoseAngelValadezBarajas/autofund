@@ -34,6 +34,7 @@ DATA_SOURCE_VERSION = "autofund.candle-source.v1"
 
 CAPTURED = "CAPTURED_MARKET_DATA"
 SYNTHETIC = "SYNTHETIC_FIXTURE"
+ALPACA_HISTORICAL = "ALPACA_HISTORICAL"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +49,7 @@ class CandleSeries:
 
     @property
     def is_real_market_data(self) -> bool:
-        return self.source == CAPTURED
+        return self.source in (CAPTURED, ALPACA_HISTORICAL)
 
     @property
     def fingerprint(self) -> str:
@@ -160,3 +161,16 @@ def synthetic_candles(*, prices: list[str], start: datetime | None = None,
 def to_dataset(series: CandleSeries) -> HistoricalDataset:
     """Wrap a series as the replay layer's dataset type."""
     return HistoricalDataset(market=series.market, candles=series.candles)
+
+
+def from_alpaca(series: Any) -> CandleSeries:
+    """Bridge a verified Alpaca daily series into the research pipeline.
+
+    ``source_detail`` carries feed and adjustment so a claim can be scoped. Note that
+    ``CandleSeries.fingerprint`` covers only market, source and closes; the authoritative identity of
+    an Alpaca series is ``series.fingerprint``, which also covers feed, adjustment and every OHLCV
+    field, and callers must record that one.
+    """
+    return CandleSeries(market=series.symbol, candles=series.candles, source=ALPACA_HISTORICAL,
+                        source_detail=f"alpaca:{series.feed}:{series.adjustment}:{series.fingerprint}",
+                        gaps=series.gaps)

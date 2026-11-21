@@ -26,6 +26,18 @@ not to commit it" stops working the first time someone runs `git add -A`.
 | `PRIVATE_FINANCIAL_DATA` | **No** | Journals, ledgers, fills, balances, position cost basis |
 | `PRIVATE_LARGE_DATASETS` | **No** | Microstructure and cross-venue captures, datasets |
 | `PRIVATE_RESEARCH_ARTIFACTS` | **No** | Real certifications containing account-specific state |
+| `PRIVATE_RESEARCH_RECORD` | **No** | `research/`: hypothesis registrations, evaluation results, captured quotes, paper-session journals and equity history |
+
+## The research record (`research/`)
+
+`autofund lab` writes everything personal to `research/`, which is git-ignored: the quote capture,
+the paper-session journal and equity history, and, when you run the research scripts, your hypothesis
+registrations and results. The directory has its own **local** git repository so that a registration
+can be committed, and therefore timestamped, before any result exists. That repository is never
+pushed and is not part of this one.
+
+The software that reads and writes it is published. The data is not. A test fails if any path under
+`research/` becomes tracked.
 
 ## Why runtime artifacts are private
 

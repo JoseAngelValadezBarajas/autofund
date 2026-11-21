@@ -16,6 +16,12 @@ def main() -> int:
         from autofund.mvp.app import main as app_main
 
         return app_main(["--mode", "demo", *sys.argv[2:]], prog="autofund demo")
+    if len(sys.argv) > 1 and sys.argv[1] == "lab":
+        # Paper-only laboratory. Separate from demo so demo's "no credentials, no live capability"
+        # guarantees are never weakened to make room for paper keys.
+        from autofund.lab.app import main as lab_main
+
+        return lab_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "live":
         from autofund.live.cli import main as live_main
 

@@ -129,6 +129,22 @@ only, with no values.
 
 ---
 
+## Paper-trading lab
+
+`autofund lab` opens a separate, **paper-money-only** laboratory for Alpaca. It needs Alpaca *paper*
+API keys (`PK...`) in `.env` (see `.env.example`); live keys are refused, and no live trading host
+exists anywhere in the code.
+
+```powershell
+.venv\Scriptsutofund lab
+```
+
+From the page you can: start and stop quote capture yourself (it runs only while the app is open and
+ends when you close it; there is no background job), preview a server-built plan, authorize a paper
+session with a typed phrase, execute the plan, and kill the session. Strategies are labelled
+`UNCERTIFIED` unless your own evidence says otherwise. Everything the lab records is written to the
+git-ignored `research/` directory and is never published.
+
 ## The philosophy
 
 ```mermaid

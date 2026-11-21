@@ -61,6 +61,10 @@ def _ignored(path: str) -> bool:
     "frontend/dist/index.html",
     "frontend/node_modules/react/index.js",
     "notes.tmp",
+    "research/registrations/H-A1.json",
+    "research/results/ha1_evaluation.json",
+    "research/capture/quotes-2026-11-23.jsonl",
+    "research/paper/journal.jsonl",
 ])
 def test_private_paths_are_ignored(path: str) -> None:
     """A file an operator creates locally must not be committable by accident."""
@@ -112,6 +116,20 @@ def test_no_credential_shaped_file_is_tracked() -> None:
         r".*\.pfx|.*\.clixml|.*\.secret$)", re.IGNORECASE)
     offenders = [path for path in _tracked() if forbidden.search(path)]
     assert not offenders, f"credential-shaped paths are tracked: {offenders}"
+
+
+def test_the_private_research_record_is_never_tracked() -> None:
+    """`research/` holds registrations, results, captured data and paper journals: personal
+    experiment data, not software. It must never reach the published repository."""
+    offenders = [path for path in _tracked() if path.startswith("research/")]
+    assert not offenders, f"private research data is tracked: {offenders}"
+
+
+def test_no_tracked_file_depends_on_a_private_research_file() -> None:
+    """Software may *read* research/ at run time, but no tracked file may embed its contents."""
+    for path in _tracked():
+        if path.endswith((".json", ".jsonl")) and "registrations/" in path:
+            raise AssertionError(f"a hypothesis registration is tracked: {path}")
 
 
 def test_no_private_runtime_state_is_tracked() -> None:

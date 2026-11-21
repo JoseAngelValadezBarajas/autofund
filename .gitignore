@@ -100,3 +100,6 @@ frontend/.vite/
 scripts/_*.py
 scripts/*.tmp.json
 *.tmp
+
+# Private local research record (registrations, results, captures, paper journals). Never pushed.
+research/
