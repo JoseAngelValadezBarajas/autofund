@@ -10,6 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from autofund.web_security import SECURITY_HEADERS, host_allowed
+
 from . import models
 from .service import DashboardDataProvider
 
@@ -21,8 +23,10 @@ def create_app(provider: DashboardDataProvider, dist: Path | None = None) -> Fas
 
     @app.middleware("http")
     async def headers(request: Request, call_next: Any) -> Any:
+        if not host_allowed(request.headers.get("host", "")):
+            return JSONResponse(status_code=400, content={"code": "INVALID_HOST"})
         response = await call_next(request)
-        response.headers.update({"X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin", "Cache-Control": "no-store"})
+        response.headers.update(SECURITY_HEADERS)
         return response
 
     @app.exception_handler(FileNotFoundError)

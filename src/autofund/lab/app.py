@@ -23,6 +23,7 @@ from autofund.lab.api import build_lab_router
 from autofund.lab.service import LabService
 from autofund.lab.session import FLATTEN_PHRASE, START_PHRASE
 from autofund.version import PRODUCT_VERSION, VERSION
+from autofund.web_security import SECURITY_HEADERS, host_allowed, token_matches
 
 
 def create_lab_app(service: LabService, dist: Path | None = None, *, host: str = "127.0.0.1",
@@ -41,19 +42,15 @@ def create_lab_app(service: LabService, dist: Path | None = None, *, host: str =
 
     @app.middleware("http")
     async def security(request: Request, call_next: Any) -> Response:
-        if request.headers.get("host", "") not in allowed_hosts:
+        if request.headers.get("host", "") not in allowed_hosts or not host_allowed(request.headers.get("host", "")):
             return JSONResponse(status_code=400, content={"code": "INVALID_HOST"})
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             expected = {f"http://{host}:{port}", f"http://localhost:{port}", "http://testserver"}
             if request.headers.get("origin") not in expected or \
-                    request.headers.get("x-autofund-control-token") != token:
+                    not token_matches(request.headers.get("x-autofund-control-token"), token):
                 return JSONResponse(status_code=403, content={"code": "CONTROL_AUTH_REQUIRED"})
         response = cast(Response, await call_next(request))
-        response.headers.update({
-            "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin",
-            "Cache-Control": "no-store",
-            "Content-Security-Policy": "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
-                                       "style-src 'self' 'unsafe-inline'; script-src 'self'"})
+        response.headers.update(SECURITY_HEADERS)
         return response
 
     @app.get("/api/v1/health")

@@ -52,8 +52,11 @@ PATTERNS: dict[str, re.Pattern[str]] = {
         r"\s*[:=]\s*[\"']?([A-Za-z0-9+/=_\-]{24,})[\"']?"),
     "BEARER_TOKEN": re.compile(r"(?i)authorization\s*:\s*[\"']?bearer\s+([A-Za-z0-9._\-]{20,})"),
     "CLIXML_CREDENTIAL": re.compile(r"<Objs\b[^>]*>.*?Export-Clixml", re.DOTALL),
+    # A `.env`-style assignment of a long value. A compiled regular expression such as
+    # `_TOKEN = re.compile(...)` is source code that merely has TOKEN in a constant's name, so it is
+    # excluded; every other long value is still reported.
     "ENV_ASSIGNED_SECRET": re.compile(
-        r"(?m)^\s*[A-Z_]*?(?:API_KEY|API_SECRET|SECRET|TOKEN|PASSWORD)\s*=\s*([^\s#]{16,})"),
+        r"(?m)^\s*[A-Z_]*?(?:API_KEY|API_SECRET|SECRET|TOKEN|PASSWORD)\s*=\s*(?!re\.compile\()([^\s#]{16,})"),
 }
 
 # Deliberate, documented non-secrets. A finding whose matched text says it is fake is not a

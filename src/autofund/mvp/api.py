@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from autofund.live.models import LiveError
 from autofund.version import PRODUCT_VERSION, VERSION
+from autofund.web_security import SECURITY_HEADERS, host_allowed, token_matches
 
 from .orchestrator import AutoFundOrchestrator, SessionConfig, SessionStartBlocked
 
@@ -63,16 +64,15 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
     @app.middleware("http")
     async def security(request: Request, call_next: Any) -> Response:
         request_host = request.headers.get("host", "")
-        if request_host not in allowed_hosts:
+        if request_host not in allowed_hosts or not host_allowed(request_host):
             return JSONResponse(status_code=400, content={"code": "INVALID_HOST"})
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             origin = request.headers.get("origin")
             expected = {f"http://{host}:{port}", f"http://localhost:{port}", "http://testserver"}
-            if origin not in expected or request.headers.get("x-autofund-control-token") != control_token:
+            if origin not in expected or not token_matches(request.headers.get("x-autofund-control-token"), control_token):
                 return JSONResponse(status_code=403, content={"code": "CONTROL_AUTH_REQUIRED"})
         response = cast(Response, await call_next(request))
-        response.headers.update({"X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin",
-                                 "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"})
+        response.headers.update(SECURITY_HEADERS)
         return response
 
     @app.get("/api/v1/control/session")

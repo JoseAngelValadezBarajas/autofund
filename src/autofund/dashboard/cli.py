@@ -11,7 +11,7 @@ from .service import DashboardDataProvider
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only AutoFund monitoring dashboard")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "localhost"))
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts/f4"))
     parser.add_argument("--session", type=Path)

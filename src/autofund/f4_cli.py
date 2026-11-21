@@ -4,6 +4,12 @@ import sys
 
 
 def main() -> int:
+    # Safety invariants in this codebase are `assert` statements. `python -O` removes every one of
+    # them, so a trading application must refuse to start in that mode rather than run with its
+    # checks silently gone.
+    if sys.flags.optimize:
+        print("AutoFund refuses to run with python -O / PYTHONOPTIMIZE: safety assertions would be removed.")
+        return 2
     if len(sys.argv) > 1 and sys.argv[1] == "app":
         from autofund.mvp.app import main as app_main
 
