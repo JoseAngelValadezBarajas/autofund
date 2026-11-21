@@ -15,6 +15,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
 
+from autofund.replay.data import Candle
+
 from . import parsing
 from .errors import (
     AlpacaAuthenticationError,
@@ -225,7 +227,7 @@ class AlpacaDataClient:
             validate_symbol(symbol)
         validate_adjustment(adjustment)
         validate_feed(feed)
-        collected: dict[str, list] = {s: [] for s in symbols}
+        collected: dict[str, list[Candle]] = {s: [] for s in symbols}
         token: str | None = None
         for _ in range(MAX_PAGES):
             query = {
@@ -252,7 +254,7 @@ class AlpacaDataClient:
         empty = [s for s, c in collected.items() if not c]
         if empty:
             raise AlpacaValidationError("no bars returned for: " + ",".join(empty))
-        ordered: dict[str, tuple] = {}
+        ordered: dict[str, tuple[Candle, ...]] = {}
         for symbol, candles in collected.items():
             stamps = [c.timestamp for c in candles]
             if stamps != sorted(stamps) or len(set(stamps)) != len(stamps):

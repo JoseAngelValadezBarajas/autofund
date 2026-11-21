@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
@@ -134,11 +134,11 @@ class HttpxPaperTransport:
 
 # ---- models ----
 
-def _opt(row: dict, key: str) -> Decimal | None:
+def _opt(row: dict[str, Any], key: str) -> Decimal | None:
     return None if row.get(key) is None else _dec(row, key)
 
 
-def _dec(row: dict, key: str) -> Decimal:
+def _dec(row: dict[str, Any], key: str) -> Decimal:
     value = row.get(key)
     if value is None:
         raise AlpacaParseError(f"missing {key}")
@@ -196,23 +196,23 @@ class Order:
         return self.status in TERMINAL
 
 
-def parse_account(row: dict) -> Account:
+def parse_account(row: dict[str, Any]) -> Account:
     return Account(str(row.get("status", "")), _dec(row, "equity"), _dec(row, "last_equity"),
                    _dec(row, "cash"), _dec(row, "buying_power"), bool(row.get("trading_blocked")))
 
 
-def parse_clock(row: dict) -> Clock:
+def parse_clock(row: dict[str, Any]) -> Clock:
     return Clock(bool(row.get("is_open")), str(row.get("timestamp", "")),
                  str(row.get("next_open", "")), str(row.get("next_close", "")))
 
 
-def parse_position(row: dict) -> Position:
+def parse_position(row: dict[str, Any]) -> Position:
     return Position(validate_symbol(str(row.get("symbol", ""))), _dec(row, "qty"),
                     _dec(row, "market_value"), _dec(row, "avg_entry_price"),
                     _dec(row, "unrealized_pl"), _dec(row, "current_price"))
 
 
-def parse_order(row: dict) -> Order:
+def parse_order(row: dict[str, Any]) -> Order:
     return Order(str(row.get("id", "")), str(row.get("client_order_id", "")),
                  str(row.get("symbol", "")), str(row.get("side", "")), str(row.get("status", "")),
                  _opt(row, "notional"), _opt(row, "filled_qty") or Decimal(0),
@@ -241,7 +241,7 @@ class AlpacaPaperClient:
         self._next = 0.0
         self._auth_failed = False
 
-    def _call(self, method: str, path: str, payload: dict | None = None) -> object:
+    def _call(self, method: str, path: str, payload: dict[str, Any] | None = None) -> object:
         body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode() if payload else b""
         validate_paper_request(method, path, body)
         if self._auth_failed:
@@ -281,13 +281,13 @@ class AlpacaPaperClient:
         raise AlpacaTransportError("paper attempts exhausted")
 
     @staticmethod
-    def _obj(value: object) -> dict:
+    def _obj(value: object) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise AlpacaParseError("expected an object")
         return value
 
     @staticmethod
-    def _list(value: object) -> list:
+    def _list(value: object) -> list[Any]:
         if not isinstance(value, list):
             raise AlpacaParseError("expected a list")
         return value

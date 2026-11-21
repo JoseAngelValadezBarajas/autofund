@@ -1,6 +1,7 @@
 """HTTP surface of the lab. Mutations need the same-origin control token."""
 
 import json
+from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -57,7 +58,7 @@ def _config(body: PlanRequest, auto: bool = False) -> SessionConfig:
 def build_lab_router(service: LabService) -> APIRouter:
     router = APIRouter()
 
-    def guarded(fn: Any) -> Any:
+    def guarded[T](fn: Callable[[], T]) -> T:
         try:
             return fn()
         except (SessionError, CaptureError, SignalError) as exc:
@@ -125,6 +126,7 @@ def build_lab_router(service: LabService) -> APIRouter:
 
     @router.get("/api/v1/lab/export/journal")
     def export_journal() -> dict[str, Any]:
-        return json.loads(json.dumps({"items": service.session.journal.tail(500)}, default=str))
+        items = json.loads(json.dumps(service.session.journal.tail(500), default=str))
+        return {"items": items}
 
     return router
