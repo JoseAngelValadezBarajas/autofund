@@ -15,6 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
 
+from autofund.http_limits import send_limited
 from autofund.replay.data import Candle
 
 from . import parsing
@@ -145,8 +146,9 @@ class HttpxAlpacaTransport:
                 follow_redirects=False,
                 trust_env=False,
             ) as client:
-                response = client.request(
-                    request.method, DATA_BASE_URL + request.path, headers=headers
+                response = send_limited(
+                    client, request.method, DATA_BASE_URL + request.path, headers=headers,
+                    max_bytes=32 * 1024 * 1024,  # ten years of daily bars for 50 symbols is far less
                 )
                 retry = response.headers.get("Retry-After", "60")
                 return TransportResponse(

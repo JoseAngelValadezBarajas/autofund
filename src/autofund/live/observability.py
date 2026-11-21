@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from autofund.dashboard.live import DEFAULT_RUNTIME_PATH
 from autofund.dashboard.models import RuntimeEvent, RuntimeView
+from autofund.monitoring import swallow
 from autofund.replay.serialization import canonical_json
 
 
@@ -48,8 +49,8 @@ class LivePublisher:
                 with self._lock:
                     if self._last and self._last.status == "RUNNING":
                         self._write(self._last.model_copy(update={"last_state_update_at": datetime.now(UTC)}))
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow("live.observability.heartbeat", exc)
 
     def event(self, state: str, accounting: dict[str, Any], *, status: str = "RUNNING") -> None:
         try:
@@ -75,5 +76,5 @@ class LivePublisher:
             with self._lock:
                 self._last = view
                 self._write(view)
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow("live.observability.event", exc)

@@ -23,7 +23,9 @@ from autofund.demo import (
     resolve_mode,
 )
 from autofund.live.journal import DEFAULT_JOURNAL
+from autofund.monitoring import swallow
 from autofund.observer.client import BitsoProductionReadOnlyClient
+from autofund.web_security import LaunchGate
 
 from .api import create_mvp_app
 from .orchestrator import (
@@ -98,12 +100,13 @@ def _run(*, args: argparse.Namespace, mode: RuntimeMode, artifacts: Path,
         # Research-only: GET-only discovery beside Production, never inside it.
         # Demo mode must never contact the exchange, so it never starts a scanner.
         try:
-            assert isinstance(runner, ProductionAutonomousRunner)
+            if not isinstance(runner, ProductionAutonomousRunner):  # explicit: survives python -O
+                raise TypeError("scanner needs the Production runner")
             orchestrator.start_scanner(MarketScanner(production_scanner_source(runner),
                                                       interval_seconds=args.scan_interval),
                                        interval_seconds=args.scan_interval)
-        except Exception:
-            pass  # Scanner availability never blocks the product.
+        except Exception as exc:  # Scanner availability never blocks the product, but is recorded.
+            swallow("mvp.scanner.start", exc)
     elif demo:
         # Deterministic, network-free research fixture for browser certification.
         # A single synchronous scan keeps demo bytes reproducible; the background
@@ -122,9 +125,11 @@ def _run(*, args: argparse.Namespace, mode: RuntimeMode, artifacts: Path,
             return 3
 
     dist = Path(__file__).parents[3] / "frontend" / "dist"
+    gate = None if demo else LaunchGate()
     app = create_mvp_app(orchestrator, dist, host=args.host, port=args.port,
-                         artifacts_root=artifacts)
+                         artifacts_root=artifacts, gate=gate)
     url = f"http://{args.host}:{args.port}"
+    open_url = gate.launch_url(url) if gate is not None else url
     print(f"AutoFund MVP 0.3.0 — mode {mode.value}")
     if demo:
         print("DEMO MODE: synthetic data, no exchange credentials, no exchange access.")
@@ -132,13 +137,18 @@ def _run(*, args: argparse.Namespace, mode: RuntimeMode, artifacts: Path,
         if isolation is not None:
             removed = isolation.public()["removed_credential_variables"]
             print(f"  Credential variables isolated: {removed or 'none were present'}")
-    print("Dashboard available at: " + url)
+    if gate is not None:
+        print("Open this link (it carries a key; other programs on this machine cannot use the page "
+              "without it):")
+        print("  " + open_url)
+    else:
+        print("Dashboard available at: " + url)
     if not args.no_open_browser:
         def open_browser() -> None:
             try:
-                webbrowser.open(url)
-            except Exception:
-                pass
+                webbrowser.open(open_url)
+            except Exception as exc:
+                swallow("mvp.browser.open", exc)
         threading.Timer(0.8, open_browser).start()
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0

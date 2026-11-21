@@ -20,6 +20,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
 
+from autofund.http_limits import send_limited
+
 from .client import AlpacaCredentials, TransportResponse
 from .errors import (
     AlpacaAuthenticationError,
@@ -120,8 +122,8 @@ class HttpxPaperTransport:
             with httpx.Client(
                 timeout=httpx.Timeout(20, connect=5), follow_redirects=False, trust_env=False
             ) as client:
-                response = client.request(
-                    request.method, PAPER_BASE_URL + request.path, headers=headers,
+                response = send_limited(
+                    client, request.method, PAPER_BASE_URL + request.path, headers=headers,
                     content=request.body or None,
                 )
                 retry = response.headers.get("Retry-After", "60")

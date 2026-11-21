@@ -8,6 +8,8 @@ from pathlib import Path
 
 import httpx
 
+from autofund.monitoring import swallow
+
 URL = "http://127.0.0.1:8000"
 _owned: subprocess.Popen[bytes] | None = None
 
@@ -40,8 +42,8 @@ def ensure_dashboard(session: Path, *, open_browser: bool = True) -> str:
     if open_browser:
         try:
             webbrowser.open(URL, new=2)
-        except Exception:
-            pass
+        except Exception as exc:
+            swallow("dashboard.browser.open", exc)
     return URL
 
 

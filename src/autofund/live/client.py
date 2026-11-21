@@ -19,6 +19,7 @@ from autofund.exchanges.bitso.models import (
     RemoteOrder,
     identifier,
 )
+from autofund.http_limits import send_limited
 from autofund.observer.models import OrderBookSnapshot
 from autofund.observer.parsing import depth
 
@@ -143,8 +144,8 @@ class BitsoProductionLiveTransport:
             raise LiveError("GET_BODY_PROHIBITED")
         try:
             with httpx.Client(timeout=httpx.Timeout(10, connect=5), follow_redirects=False, trust_env=False) as session:
-                response = session.request(method, HOST + path, content=body,
-                                           headers={"Authorization": authorization, "Content-Type": "application/json"})
+                response = send_limited(session, method, HOST + path, content=body,
+                                        headers={"Authorization": authorization, "Content-Type": "application/json"})
             row = parsing.decode(response.content)
             if response.status_code != 200 or row.get("success") is not True:
                 raise LiveError("PRODUCTION_RESPONSE_REJECTED_OR_UNCERTAIN")

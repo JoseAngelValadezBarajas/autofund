@@ -23,11 +23,17 @@ from autofund.lab.api import build_lab_router
 from autofund.lab.service import LabService
 from autofund.lab.session import FLATTEN_PHRASE, START_PHRASE
 from autofund.version import PRODUCT_VERSION, VERSION
-from autofund.web_security import SECURITY_HEADERS, host_allowed, token_matches
+from autofund.web_security import (
+    SECURITY_HEADERS,
+    LaunchGate,
+    host_allowed,
+    install_launch_gate,
+    token_matches,
+)
 
 
 def create_lab_app(service: LabService, dist: Path | None = None, *, host: str = "127.0.0.1",
-                   port: int = 8000) -> FastAPI:
+                   port: int = 8000, gate: LaunchGate | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
@@ -38,6 +44,9 @@ def create_lab_app(service: LabService, dist: Path | None = None, *, host: str =
     app = FastAPI(title=PRODUCT_VERSION + " lab", version=VERSION, docs_url=None, redoc_url=None,
                   lifespan=lifespan)
     token = secrets.token_urlsafe(32)
+    # Registered first so it runs *inside* the Host/Origin check below (the last one added is the
+    # outermost): a rebinding request is refused before anything else looks at it.
+    install_launch_gate(app, gate)
     allowed_hosts = {host, f"{host}:{port}", "localhost", f"localhost:{port}", "testserver"}
 
     @app.middleware("http")
@@ -80,12 +89,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     service = LabService()
     dist = Path(__file__).parents[3] / "frontend" / "dist"
-    app = create_lab_app(service, dist, host=args.host, port=args.port)
+    gate = LaunchGate()
+    app = create_lab_app(service, dist, host=args.host, port=args.port, gate=gate)
     url = f"http://{args.host}:{args.port}"
+    launch = gate.launch_url(url)
     print(f"AutoFund Lab {VERSION} — PAPER ONLY. Live trading is not representable in this build.")
     print("Capture and sessions run only while this window is open; closing it stops everything.")
-    print("Personal data is written to research/ (git-ignored). Dashboard: " + url)
+    print("Personal data is written to research/ (git-ignored).")
+    print("Open this link (it carries a key; other programs on this machine cannot use the page without it):")
+    print("  " + launch)
     if not args.no_open_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.8, lambda: webbrowser.open(launch)).start()
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0

@@ -17,6 +17,7 @@ from autofund.exchanges.bitso.auth import (
     SignedRequest,
     sign,
 )
+from autofund.http_limits import send_limited
 
 from . import parsing
 from .errors import (
@@ -96,7 +97,8 @@ class ReadOnlyBitsoTransport:
                 follow_redirects=False,
                 trust_env=False,
             ) as client:
-                result = client.get(PRODUCTION_BASE_URL + path, headers=headers)
+                result = send_limited(client, "GET", PRODUCTION_BASE_URL + path, headers=headers,
+                                      max_bytes=8 * 1024 * 1024)  # full order books are the largest read
                 cooldown = result.headers.get("Retry-After", "60")
                 return ReadResponse(
                     result.status_code,

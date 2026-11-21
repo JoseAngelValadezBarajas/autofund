@@ -48,7 +48,12 @@ class BitsoNonceProvider:
     """
 
     _lock = threading.Lock()
-    _used: ClassVar[set[str]] = set()
+    # nonce -> the millisecond stamp it was issued at. Nonces older than the window below can never
+    # collide again (the stamp only moves forward), so they are dropped and memory stays bounded
+    # however long a session runs.
+    _used: ClassVar[dict[str, int]] = {}
+    _WINDOW_MS: ClassVar[int] = 10 * 60 * 1000
+    _PRUNE_ABOVE: ClassVar[int] = 4096
 
     def __init__(
         self,
@@ -69,7 +74,11 @@ class BitsoNonceProvider:
                     raise BitsoAuthenticationError("invalid nonce entropy")
                 nonce = f"{stamp}{salt:06d}"
                 if nonce not in self._used:
-                    self._used.add(nonce)
+                    self._used[nonce] = stamp
+                    if len(self._used) > self._PRUNE_ABOVE:
+                        cutoff = stamp - self._WINDOW_MS
+                        for stale in [n for n, at in self._used.items() if at < cutoff]:
+                            del self._used[stale]
                     return nonce
             raise BitsoAuthenticationError("nonce collision budget exhausted")
 

@@ -20,6 +20,7 @@ from autofund.exchanges.bitso.models import (
     identifier,
 )
 from autofund.models import Side
+from autofund.monitoring import swallow
 from autofund.replay.serialization import canonical_json, fingerprint
 from autofund.wallet import Wallet
 
@@ -170,15 +171,15 @@ class LiveExecution:
         if self._emit:
             try:
                 self._emit(state, {**self.public(), **data})
-            except Exception:
-                pass  # Monitoring failure cannot change financial behavior.
+            except Exception as exc:  # Monitoring failure cannot change financial behavior...
+                swallow("live.execution.state", exc)  # ...but it is counted and logged.
 
     def emit(self, event: str, **fields: Any) -> None:
         if self._emit:
             try:
                 self._emit(event, {**self.public(), **fields})
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow("live.execution.emit", exc)
 
     def check(self, budget: Decimal | None = None) -> Preflight:
         checked = preflight(self.client, self.config, self.wallet, unresolved=bool(self.unresolved), budget=budget,
@@ -196,8 +197,8 @@ class LiveExecution:
         if self._emit:
             try:
                 self._emit("INTENT_CREATED", self.public())
-            except Exception:
-                pass
+            except Exception as exc:
+                swallow("live.execution.intent", exc)
         self.state(intent.origin_id, "PREFLIGHT_PASS")
         self.state(intent.origin_id, "AWAITING_OPERATOR")
         return intent

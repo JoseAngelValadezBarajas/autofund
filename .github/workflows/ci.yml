@@ -118,7 +118,7 @@ jobs:
           if-no-files-found: warn
       - name: bandit
         # Asserted against the recorded baseline rather than `bandit`'s exit code, because bandit
-        # exits non-zero whenever it reports anything at all and this codebase has 46 Low findings
+        # exits non-zero whenever it reports anything at all and this codebase has 37 Low findings
         # (assert statements, try/except/pass, and the one subprocess use). Treating "any finding"
         # as failure means the step always fails and everyone learns to ignore it. What must not
         # happen is a Medium or High appearing, or the Low count growing unnoticed.
@@ -134,8 +134,8 @@ jobs:
           print(f"bandit: {low} Low, {medium} Medium, {high} High")
           if medium or high:
               sys.exit(f"bandit found {medium} Medium and {high} High severity issue(s)")
-          if low > 46:
-              sys.exit(f"bandit Low findings grew from the recorded baseline of 46 to {low}")
+          if low > 37:
+              sys.exit(f"bandit Low findings grew from the recorded baseline of 37 to {low}")
           PY
       - name: upload bandit report
         if: always()

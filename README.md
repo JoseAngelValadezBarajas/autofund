@@ -145,6 +145,16 @@ session with a typed phrase, execute the plan, and kill the session. Strategies 
 `UNCERTIFIED` unless your own evidence says otherwise. Everything the lab records is written to the
 git-ignored `research/` directory and is never published.
 
+## Credentials
+
+Secrets are not meant to live in plain files. With the optional extra installed
+(`pip install -e ".[secure]"`), `autofund secrets set NAME` stores a value in your operating system's
+credential store from a hidden prompt, `autofund secrets import-env .env --delete-source` moves an
+existing `.env` into it and removes the file, and `autofund secrets status` shows which names exist
+without ever printing a value. Commands that need credentials load them into their own process at
+start-up; demo mode never receives any. The execution journal that records real orders is also
+authenticated with a key kept in that store.
+
 ## The philosophy
 
 ```mermaid

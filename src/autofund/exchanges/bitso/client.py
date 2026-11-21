@@ -10,6 +10,8 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 
+from autofund.http_limits import send_limited
+
 from . import parsing
 from .auth import BitsoCredentials, BitsoNonceProvider, SignedRequest, sign
 from .errors import (
@@ -111,7 +113,8 @@ class HttpxBitsoTransport:
                 follow_redirects=False,
                 trust_env=False,
             ) as client:
-                response = client.request(
+                response = send_limited(
+                    client,
                     request.method,
                     STAGE_BASE_URL + request.path,
                     content=request.body,

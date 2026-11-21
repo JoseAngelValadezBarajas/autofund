@@ -17,7 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from autofund.live.models import LiveError
 from autofund.version import PRODUCT_VERSION, VERSION
-from autofund.web_security import SECURITY_HEADERS, host_allowed, token_matches
+from autofund.web_security import (
+    SECURITY_HEADERS,
+    LaunchGate,
+    host_allowed,
+    install_launch_gate,
+    token_matches,
+)
 
 from .orchestrator import AutoFundOrchestrator, SessionConfig, SessionStartBlocked
 
@@ -48,7 +54,7 @@ class ActionRequest(BaseModel):
 
 def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
                    *, host: str = "127.0.0.1", port: int = 8000,
-                   artifacts_root: Path | None = None) -> FastAPI:
+                   artifacts_root: Path | None = None, gate: LaunchGate | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
@@ -59,6 +65,9 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
 
     app = FastAPI(title=PRODUCT_VERSION, version=VERSION, docs_url=None, redoc_url=None, lifespan=lifespan)
     control_token = secrets.token_urlsafe(32)
+    # Real (shadow/production) runs require the launch link; demo has no real capability and none.
+    # Registered before the Host/Origin middleware below so that one is the outermost.
+    install_launch_gate(app, gate)
     allowed_hosts = {host, f"{host}:{port}", "localhost", f"localhost:{port}", "testserver"}
 
     @app.middleware("http")

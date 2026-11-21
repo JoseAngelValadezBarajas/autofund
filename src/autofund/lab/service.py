@@ -28,8 +28,14 @@ PORTFOLIO_TTL_SECONDS = 5.0
 
 
 def default_credentials() -> AlpacaCredentials:
-    path = env_file()
-    return load_credentials(path) if path.exists() else AlpacaCredentials.from_env()
+    """The environment first (the CLI fills it from the OS credential store), then a local .env."""
+    try:
+        return AlpacaCredentials.from_env()
+    except AlpacaAuthenticationError:
+        path = env_file()
+        if path.exists():
+            return load_credentials(path)
+        raise
 
 
 class LabService:
