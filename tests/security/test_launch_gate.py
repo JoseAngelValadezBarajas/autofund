@@ -115,3 +115,39 @@ def test_real_modes_get_a_gate_and_demo_does_not():
     from autofund.mvp import app as app_module
     source = inspect.getsource(app_module)
     assert "gate = None if demo else LaunchGate()" in source
+
+
+def test_the_launch_key_works_once_and_then_is_dead(tmp_path, gate):
+    with TestClient(lab_app(tmp_path, gate)) as first, TestClient(lab_app(tmp_path, gate)) as second:
+        assert first.get(f"/?k={gate.launch_key}", follow_redirects=False).status_code == 303
+        assert second.get(f"/?k={gate.launch_key}", follow_redirects=False).status_code == 401
+        assert first.get("/api/v1/health").status_code == 200  # the first browser keeps its session
+
+
+def test_the_launch_key_expires(tmp_path, gate, monkeypatch):
+    import autofund.web_security as ws
+    monkeypatch.setattr(ws.time, "monotonic", lambda: gate._created + gate.LINK_LIFETIME_SECONDS + 1)
+    with TestClient(lab_app(tmp_path, gate)) as client:
+        assert client.get(f"/?k={gate.launch_key}", follow_redirects=False).status_code == 401
+
+
+def test_access_log_lines_never_carry_the_key():
+    import logging
+
+    from autofund.web_security import redact_launch_key_in_logs
+    redact_launch_key_in_logs()
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s"', ("127.0.0.1", "GET", "/?k=SECRETKEY123&a=1"), None)
+    for f in logging.getLogger("uvicorn.access").filters:
+        f.filter(record)
+    assert "SECRETKEY123" not in record.getMessage() and "k=REDACTED" in record.getMessage()
+
+
+def test_redaction_keeps_the_url_shape_exactly():
+    import logging
+
+    from autofund.web_security import redact_launch_key_in_logs
+    redact_launch_key_in_logs()
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, "%s", ("GET /?k=SECRET1&a=1",), None)
+    for f in logging.getLogger("uvicorn.access").filters:
+        f.filter(record)
+    assert record.getMessage() == "GET /?k=REDACTED&a=1"

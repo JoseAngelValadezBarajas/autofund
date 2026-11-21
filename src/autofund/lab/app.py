@@ -28,6 +28,7 @@ from autofund.web_security import (
     LaunchGate,
     host_allowed,
     install_launch_gate,
+    redact_launch_key_in_logs,
     token_matches,
 )
 
@@ -90,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
     service = LabService()
     dist = Path(__file__).parents[3] / "frontend" / "dist"
     gate = LaunchGate()
+    if gate is not None:
+        redact_launch_key_in_logs()
     app = create_lab_app(service, dist, host=args.host, port=args.port, gate=gate)
     url = f"http://{args.host}:{args.port}"
     launch = gate.launch_url(url)

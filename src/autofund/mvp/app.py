@@ -25,7 +25,7 @@ from autofund.demo import (
 from autofund.live.journal import DEFAULT_JOURNAL
 from autofund.monitoring import swallow
 from autofund.observer.client import BitsoProductionReadOnlyClient
-from autofund.web_security import LaunchGate
+from autofund.web_security import LaunchGate, redact_launch_key_in_logs
 
 from .api import create_mvp_app
 from .orchestrator import (
@@ -126,6 +126,8 @@ def _run(*, args: argparse.Namespace, mode: RuntimeMode, artifacts: Path,
 
     dist = Path(__file__).parents[3] / "frontend" / "dist"
     gate = None if demo else LaunchGate()
+    if gate is not None:
+        redact_launch_key_in_logs()
     app = create_mvp_app(orchestrator, dist, host=args.host, port=args.port,
                          artifacts_root=artifacts, gate=gate)
     url = f"http://{args.host}:{args.port}"
