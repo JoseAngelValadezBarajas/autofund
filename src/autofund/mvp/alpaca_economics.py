@@ -115,7 +115,8 @@ def round_trip_friction(
     """
     if not spread.usable:
         raise ValueError("no in-session quotes: spread is unmeasured, friction cannot be composed")
-    assert spread.median_half_spread_bps is not None
+    if spread.median_half_spread_bps is None:  # unreachable after `usable`, but never skipped under -O
+        raise ValueError("no in-session quotes: spread is unmeasured")
     components = (
         Component("spread", spread.median_half_spread_bps * 2, MEASURED),
         Component("slippage", slippage_bps_per_side * 2, UNVERIFIED),

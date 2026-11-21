@@ -39,7 +39,7 @@ DATA_BASE_URL = "https://data.alpaca.markets"
 BARS_PATH = "/v2/stocks/bars"
 QUOTES_PATH = "/v2/stocks/quotes/latest"
 KEY_ENV = "AUTOFUND_ALPACA_DATA_API_KEY"
-SECRET_ENV = "AUTOFUND_ALPACA_DATA_API_SECRET"
+SECRET_ENV = "AUTOFUND_ALPACA_DATA_API_SECRET"  # nosec B105 - the NAME of an environment variable, not a secret
 
 MAX_SYMBOLS = 50
 MAX_PAGES = 200

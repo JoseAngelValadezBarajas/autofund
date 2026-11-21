@@ -33,7 +33,7 @@ from autofund.exchanges.alpaca.models import AlpacaBarSeries
 EVALUATION_VERSION = "autofund.daily-momentum.v1"
 TRADING_DAYS = Decimal("252")
 BPS = Decimal("10000")
-PASS_TO_PAPER = "PASS_TO_PAPER"
+ELIGIBLE_FOR_PAPER = "PASS_TO_PAPER"
 NO_TRADE = "NO_TRADE"
 
 
@@ -223,7 +223,8 @@ def control_p_value(
     exposure and the number of position changes are preserved; only the alignment with returns is
     destroyed. The ``+1`` terms make the estimate a valid, never-zero permutation p-value.
     """
-    rng = random.Random(reg.seed)
+    # Statistical permutation sampling, not security: it must be seeded and reproducible.
+    rng = random.Random(reg.seed)  # nosec B311
     n = hi - lo
     if n < 4 * reg.rebalance_every:
         raise RegistrationError("window too short for a timing control")
@@ -289,7 +290,7 @@ def evaluate(panel: Panel, reg: Registration, *, registration_committed: bool) -
         "timing_control_p_below_adjusted_alpha": p_value <= threshold,
         "holdout_net_total_return_positive": total_return(hold) > ZERO,
     }
-    decision = PASS_TO_PAPER if all(gates.values()) else NO_TRADE
+    decision = ELIGIBLE_FOR_PAPER if all(gates.values()) else NO_TRADE
     return {
         "version": EVALUATION_VERSION,
         "registration_id": reg.id,

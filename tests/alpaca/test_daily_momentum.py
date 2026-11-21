@@ -170,7 +170,7 @@ def test_a_genuinely_timeable_regime_series_can_pass(tmp_path):
     reg = registration(tmp_path)
     out = dm.evaluate(panel({"AAA": trending(), "BBB": trending(seed=3)}), reg,
                       registration_committed=True)
-    assert out["decision"] == dm.PASS_TO_PAPER and all(out["gates"].values())
+    assert out["decision"] == dm.ELIGIBLE_FOR_PAPER and all(out["gates"].values())
 
 
 def test_prior_trials_tighten_the_threshold(tmp_path):
