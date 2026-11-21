@@ -31,7 +31,7 @@ dependencies = ["httpx>=0.28,<0.29", "websockets>=16,<18", "fastapi>=0.115,<1", 
 autofund = "autofund.f4_cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10"]
+dev = ["pytest>=8,<10", "pytest-cov>=5,<8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -41,6 +41,19 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-m 'not live and not stage'"
 markers = ["live: opt-in public network certification", "stage: opt-in authenticated Bitso Stage certification", "integration: integration across real external interfaces"]
+
+[tool.coverage.run]
+source = ["autofund"]
+branch = true
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+# Measured at 85% line+branch when this gate was added. The floor sits below that so an unrelated
+# change on another platform cannot flap it, while a real loss of coverage still fails CI.
+fail_under = 80
+show_missing = true
+skip_covered = true
+exclude_also = ['if TYPE_CHECKING:', 'raise NotImplementedError', '\.\.\.$']
 
 [tool.ruff]
 target-version = "py312"

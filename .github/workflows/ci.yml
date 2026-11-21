@@ -45,8 +45,14 @@ jobs:
       # explicitly. They were referenced by the steps below but never installed, which is why the
       # first CI run died at `bandit` with "No module named bandit" rather than checking anything.
       - run: python -m pip install -e ".[dev]" ruff mypy bandit pip-audit
-      - name: pytest
-        run: python -m pytest tests -m "not live and not stage" -q
+      - name: pytest (with coverage gate)
+        # Line and branch coverage over the whole package, failing below the floor in pyproject.toml.
+        run: python -m pytest tests -m "not live and not stage" -q --cov=autofund --cov-report=term --cov-report=xml
+      - name: upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
       - name: ruff
         run: python -m ruff check src/ tests/ scripts/
       - name: mypy --strict
@@ -74,8 +80,8 @@ jobs:
       - name: typecheck
         run: npx tsc --noEmit -p tsconfig.json
         working-directory: frontend
-      - name: unit tests
-        run: npx vitest run
+      - name: unit tests (with coverage gate)
+        run: npx vitest run --coverage
         working-directory: frontend
       - name: build
         run: npm run build

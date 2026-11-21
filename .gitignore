@@ -103,3 +103,10 @@ scripts/*.tmp.json
 
 # Private local research record (registrations, results, captures, paper journals). Never pushed.
 research/
+
+# Generated coverage reports.
+frontend/coverage/
+coverage.xml
+.coverage
+.coverage.*
+htmlcov/
