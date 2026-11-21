@@ -26,7 +26,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Protocol
 
 from autofund.replay.serialization import canonical_json
 
@@ -34,12 +34,26 @@ from .errors import ExchangeInvariantError
 from .parsing import obj
 
 
+class JournalMigrationRequired(ExchangeInvariantError):
+    """The journal predates authentication and the caller did not ask to migrate it."""
+
+
+class JournalAuthState(Protocol):
+    """Where "this journal has been authenticated" is remembered, outside the journal's own files."""
+
+    def is_set(self) -> bool: ...
+    def set(self) -> None: ...
+
+
 class ExecutionJournal:
-    def __init__(self, path: Path, *, mac_key: bytes | None = None) -> None:
+    def __init__(self, path: Path, *, mac_key: bytes | None = None,
+                 auth_state: JournalAuthState | None = None, allow_upgrade: bool = True) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self._anchor_path = Path(str(path) + ".anchor")
         self._mac_key = mac_key
+        self._auth_state = auth_state
+        self._marker_written = False
         self._lockfile: BinaryIO = open(str(path) + ".lock", "a+b")
         self._closed = False
         try:
@@ -72,7 +86,11 @@ class ExecutionJournal:
         try:
             if path.exists():
                 self._load(path.read_bytes())
-            self._verify_anchor()
+            anchor_present = self._verify_anchor()
+            self._enforce_remembered_state(anchor_present, allow_upgrade)
+        except JournalMigrationRequired:
+            self.close()
+            raise
         except Exception:
             self.close()
             raise ExchangeInvariantError("journal cannot be recovered safely") from None
@@ -110,12 +128,35 @@ class ExecutionJournal:
             self.records.append(event)
         self.authenticated = self._mac_key is not None and mac_started
 
+    def _enforce_remembered_state(self, anchor_present: bool, allow_upgrade: bool) -> None:
+        """Use the out-of-band marker to tell a stripped journal from a genuinely old one.
+
+        Once authentication has started the marker says so, and from then on the journal must be
+        authenticated *and* anchored: deleting the anchor or the MACs, or the whole file, is a
+        downgrade, not an upgrade. A journal that was never authenticated may only be upgraded when
+        the caller says so explicitly.
+        """
+        if self._mac_key is None or self._auth_state is None:
+            return
+        if self._auth_state.is_set():
+            self._marker_written = True
+            if not self.records:
+                raise ExchangeInvariantError("authenticated journal is missing or empty")
+            if not self.authenticated or not anchor_present:
+                raise ExchangeInvariantError("journal authentication downgrade")
+        elif self.authenticated:
+            self._auth_state.set()  # authenticated before the marker existed (e.g. a crash): remember it
+            self._marker_written = True
+        elif self.records and not allow_upgrade:
+            raise JournalMigrationRequired("journal predates authentication; explicit migration required")
+
     def _anchor_text(self, sequence: int, chain_hash: str) -> str:
         return f"anchor|{sequence}|{chain_hash}"
 
-    def _verify_anchor(self) -> None:
+    def _verify_anchor(self) -> bool:
+        """Verify the anchor if there is one. Returns whether an anchor file exists."""
         if self._mac_key is None:
-            return
+            return False
         try:
             raw = self._anchor_path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -123,7 +164,7 @@ class ExecutionJournal:
             # One record is allowed: a crash between the first append and the first anchor write.
             if self.authenticated and len(self.records) > 1:
                 raise ExchangeInvariantError("journal anchor missing") from None
-            return
+            return False
         row = obj(json.loads(raw))
         sequence, chain_hash, mac = row.get("sequence"), row.get("hash"), row.get("mac")
         if not isinstance(sequence, int) or not isinstance(chain_hash, str) or not isinstance(mac, str):
@@ -135,6 +176,7 @@ class ExecutionJournal:
         if sequence > 0 and not self.authenticated:
             # A signed anchor proves the key was in use, so a journal with no MACs left was stripped.
             raise ExchangeInvariantError("journal authentication downgrade")
+        return True
 
     def _write_anchor(self) -> None:
         if self._mac_key is None:
@@ -194,6 +236,9 @@ class ExecutionJournal:
                 raise ExchangeInvariantError(
                     "journal anchor write failed; execution stopped"
                 ) from None
+            if self._auth_state is not None and not self._marker_written:
+                self._auth_state.set()
+                self._marker_written = True
 
     def close(self) -> None:
         if not self._closed:

@@ -36,6 +36,16 @@ from .session_types import (
 )
 
 
+def journal_blocker_for(exc: BaseException) -> str:
+    """Name the real reason the live journal could not be opened."""
+    text = str(exc)
+    if text == "LIVE_JOURNAL_NEEDS_MIGRATION":
+        return "LIVE_JOURNAL_NEEDS_MIGRATION"  # an old journal: the operator migrates it on purpose
+    if "already in use" in text:
+        return "EXECUTION_JOURNAL_IN_USE"  # another AutoFund process owns the single-writer journal
+    return "EXECUTION_JOURNAL_INTEGRITY_FAILURE"  # corrupt, truncated, or authentication stripped
+
+
 class SafeIdleRunner:
     """Safe runner shell: production adapters can stream decisions into it.
 
@@ -213,11 +223,10 @@ class ProductionAutonomousRunner(SafeIdleRunner):
         client = BitsoProductionLiveClient(credentials, single_order_cap=SINGLE_ORDER_CAP)
         try:
             self.journal = LiveExecutionJournal(self.journal_path)
-        except Exception:
-            # Another AutoFund process already owns the single-writer journal.
-            # Refusing to proceed is correct; surface why instead of a generic
-            # "startup recovery failed".
-            self._block_with("EXECUTION_JOURNAL_IN_USE")
+        except Exception as exc:
+            # Refusing to proceed is always correct; the blocker says *why*, because the three
+            # causes need three different responses from the operator.
+            self._block_with(journal_blocker_for(exc))
             raise
         self.execution = LiveExecution(client, self.journal, LiveConfig(slippage_tolerance=Decimal("0.5")),
                                        emit=self._execution_event)

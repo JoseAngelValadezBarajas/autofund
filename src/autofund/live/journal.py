@@ -2,24 +2,49 @@
 
 from pathlib import Path
 
-from autofund.exchanges.bitso.journal import ExecutionJournal
+from autofund.exchanges.bitso.journal import ExecutionJournal, JournalMigrationRequired
 
 from .models import LiveError
 
 DEFAULT_JOURNAL = Path(__file__).parents[3] / "artifacts" / "live" / "execution.jsonl"
 
 
+class _StoredAuthState:
+    """Remembers, in the credential store, that this journal has been authenticated."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def is_set(self) -> bool:
+        from autofund.secrets_store import journal_was_authenticated
+
+        return journal_was_authenticated(self._path)
+
+    def set(self) -> None:
+        from autofund.secrets_store import mark_journal_authenticated
+
+        mark_journal_authenticated(self._path)
+
+
 class LiveExecutionJournal(ExecutionJournal):
     def __enter__(self) -> "LiveExecutionJournal":
         return self
 
-    def __init__(self, path: Path = DEFAULT_JOURNAL, *, authenticate: bool = True) -> None:
+    def __init__(self, path: Path = DEFAULT_JOURNAL, *, authenticate: bool = True,
+                 migrate: bool = False) -> None:
         # The live journal is the record of real orders, so it is authenticated by default with a
-        # key kept in the credential store (see exchanges/bitso/journal.py). `authenticate=False`
-        # exists only to open a journal in its legacy, hash-chain-only form.
+        # key kept in the credential store (see exchanges/bitso/journal.py). A journal that already
+        # holds records from before authentication existed is NOT upgraded silently: someone who
+        # could edit the file could otherwise present a forged one as "old". The operator migrates it
+        # on purpose with `autofund secrets migrate-journal`, which passes migrate=True.
         from autofund.secrets_store import journal_key
 
-        super().__init__(path, mac_key=journal_key() if authenticate else None)
+        try:
+            super().__init__(path, mac_key=journal_key() if authenticate else None,
+                             auth_state=_StoredAuthState(path) if authenticate else None,
+                             allow_upgrade=migrate)
+        except JournalMigrationRequired:
+            raise LiveError("LIVE_JOURNAL_NEEDS_MIGRATION") from None
         if any(not str(row.get("kind", "")).startswith("LIVE_") for row in self.records):
             self.close()
             raise LiveError("NOT_A_LIVE_EXECUTION_JOURNAL")

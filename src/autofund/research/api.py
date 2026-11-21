@@ -132,14 +132,15 @@ def _unresolved_orders(snapshot: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     return tuple({"origin_id": origin, "status": "UNRESOLVED"} for origin in origins)
 
 
-def build_research_router(service: ResearchService) -> APIRouter:
-    """Read-only routes. Every handler is a GET; see the module docstring for why."""
-    router = APIRouter(prefix="/api/v1/research", tags=["research"])
-
+def _overview_routes(router: APIRouter, service: ResearchService) -> None:
+    """Register the read-only routes for the overview."""
     @router.get("/overview")
     def overview() -> dict[str, Any]:
         return service.overview()
 
+
+def _alpha_routes(router: APIRouter, service: ResearchService) -> None:
+    """Register the read-only routes for alpha sources."""
     @router.get("/alpha")
     def alpha_list(
         family: str | None = Query(default=None),
@@ -178,6 +179,9 @@ def build_research_router(service: ResearchService) -> APIRouter:
                     "note": ("predictive means the signal knows something; tradeable means it "
                              "could pay for itself. They are separate findings.")}}
 
+
+def _strategy_routes(router: APIRouter, service: ResearchService) -> None:
+    """Register the read-only routes for strategies."""
     @router.get("/strategies")
     def strategies_list(
         status: str | None = Query(default=None),
@@ -215,6 +219,9 @@ def build_research_router(service: ResearchService) -> APIRouter:
                                       else "DISABLED"),
                     "note": "four independent facts; none is derived from another"}}
 
+
+def _experiment_routes(router: APIRouter, service: ResearchService) -> None:
+    """Register the read-only routes for experiments."""
     @router.get("/experiments")
     def experiments_list(
         status: str | None = Query(default=None),
@@ -250,6 +257,9 @@ def build_research_router(service: ResearchService) -> APIRouter:
                     "conclusion": record.result_classification,
                     "reason_codes": list(record.reason_codes)}}
 
+
+def _evidence_routes(router: APIRouter, service: ResearchService) -> None:
+    """Register the read-only routes for evidence, campaigns and artifacts."""
     @router.get("/evidence")
     def evidence_list(
         experiment_id: str | None = Query(default=None),
@@ -288,6 +298,9 @@ def build_research_router(service: ResearchService) -> APIRouter:
             items = tuple(item for item in items if item.get("status") == status)
         return _page(items, limit=limit, offset=offset)
 
+
+def _timeline_routes(router: APIRouter, service: ResearchService) -> None:
+    """Register the read-only routes for the timeline, eligibility and schema."""
     @router.get("/timeline")
     def timeline(limit: int = Query(default=DEFAULT_PAGE_SIZE)) -> dict[str, Any]:
         return service.timeline(limit=limit)
@@ -319,6 +332,13 @@ def build_research_router(service: ResearchService) -> APIRouter:
         payload["data_provenance"] = service.provenance()
         return payload
 
+
+def build_research_router(service: ResearchService) -> APIRouter:
+    """Read-only routes. Every handler is a GET; see the module docstring for why."""
+    router = APIRouter(prefix="/api/v1/research", tags=["research"])
+    for register in (_overview_routes, _alpha_routes, _strategy_routes, _experiment_routes,
+                     _evidence_routes, _timeline_routes):
+        register(router, service)
     return router
 
 

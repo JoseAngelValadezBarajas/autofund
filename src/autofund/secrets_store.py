@@ -15,6 +15,7 @@ the store into *that process's* environment. Existing code that reads ``os.geten
 working unchanged, and the values never touch disk in plain text.
 """
 
+import hashlib
 import os
 import re
 import secrets as _secrets
@@ -217,3 +218,28 @@ def parse_env_file(text: str, names: Iterable[str] = KNOWN_NAMES) -> dict[str, s
                 value = value[1:-1]
             found[name] = value
     return found
+
+
+# ---- journal authentication marker ----
+#
+# The journal file cannot be trusted to say whether it was ever authenticated: someone who can edit it
+# can strip the MACs and delete the anchor, and what is left looks exactly like an old journal that
+# predates authentication. So the fact "this journal has been authenticated" is kept *here*, in the
+# credential store, which is out of reach of anyone who can only edit files in the journal directory.
+
+def journal_marker_name(journal_path: Path) -> str:
+    digest = hashlib.sha256(str(journal_path.resolve()).lower().encode()).hexdigest()[:24].upper()
+    return f"AUTOFUND_JOURNAL_STATE_{digest}"
+
+
+def journal_was_authenticated(journal_path: Path) -> bool:
+    return resolve(journal_marker_name(journal_path), {}) == "AUTHENTICATED"
+
+
+def mark_journal_authenticated(journal_path: Path) -> None:
+    _store_set(journal_marker_name(journal_path), "AUTHENTICATED")
+
+
+def clear_journal_marker(journal_path: Path) -> bool:
+    """Deliberate operator reset (a new journal on purpose). Returns whether a marker existed."""
+    return _store_delete(journal_marker_name(journal_path))

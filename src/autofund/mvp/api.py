@@ -52,18 +52,8 @@ class ActionRequest(BaseModel):
     reason: str = Field(default="operator", max_length=200)
 
 
-def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
-                   *, host: str = "127.0.0.1", port: int = 8000,
-                   artifacts_root: Path | None = None, gate: LaunchGate | None = None) -> FastAPI:
-    @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        try:
-            yield
-        finally:
-            # Release the backend publication thread; never touches financial state.
-            orchestrator.shutdown()
-
-    app = FastAPI(title=PRODUCT_VERSION, version=VERSION, docs_url=None, redoc_url=None, lifespan=lifespan)
+def _install_security(app: FastAPI, *, host: str, port: int, gate: LaunchGate | None) -> str:
+    """Host/Origin/token checks, headers and the optional launch gate. Returns the control token."""
     control_token = secrets.token_urlsafe(32)
     # Real (shadow/production) runs require the launch link; demo has no real capability and none.
     # Registered before the Host/Origin middleware below so that one is the outermost.
@@ -83,12 +73,11 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
         response = cast(Response, await call_next(request))
         response.headers.update(SECURITY_HEADERS)
         return response
+    return control_token
 
-    @app.get("/api/v1/control/session")
-    def control_session() -> dict[str, object]:
-        return {"control_token": control_token, "confirmation_phrase": "START AUTOFUND REAL 50",
-                "hard_bounds": {"authorized_capital_mxn": "50", "max_deployment_mxn": "25", "single_order_cap_mxn": "11"}}
 
+def _state_routes(app: FastAPI, orchestrator: AutoFundOrchestrator) -> None:
+    """Read-only views of the application state."""
     @app.get("/api/v1/health")
     def health() -> dict[str, object]:
         return {"application": "AutoFund", "product_version": PRODUCT_VERSION,
@@ -112,6 +101,14 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
 
     @app.get("/api/v1/mvp/learning")
     def learning() -> dict[str, Any]: return orchestrator.learning_view()
+
+
+def _control_routes(app: FastAPI, orchestrator: AutoFundOrchestrator, control_token: str) -> None:
+    """The only mutating routes: they control sessions, never orders."""
+    @app.get("/api/v1/control/session")
+    def control_session() -> dict[str, object]:
+        return {"control_token": control_token, "confirmation_phrase": "START AUTOFUND REAL 50",
+                "hard_bounds": {"authorized_capital_mxn": "50", "max_deployment_mxn": "25", "single_order_cap_mxn": "11"}}
 
     @app.post("/api/v1/control/start")
     def start(body: StartRequest, _: str | None = Header(default=None)) -> dict[str, Any]:
@@ -143,11 +140,15 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
             raise HTTPException(status_code=409, detail=str(exc)) from None
         return orchestrator.snapshot()
 
+
+def _export_routes(app: FastAPI, orchestrator: AutoFundOrchestrator) -> None:
+    """Telemetry, the diagnostics export and the live snapshot stream."""
     @app.get("/api/v1/telemetry")
     def telemetry(component: str | None = None, level: str | None = None,
                   checkpoint_type: str | None = None) -> dict[str, object]:
         rows = orchestrator.snapshot()["telemetry"]
-        assert isinstance(rows, list)
+        if not isinstance(rows, list):  # explicit, so it still holds under python -O
+            raise HTTPException(status_code=500, detail="telemetry unavailable")
         selected = [row for row in rows if (component is None or row.get("component") == component)
                     and (level is None or row.get("level") == level)
                     and (checkpoint_type is None or row.get("event") == checkpoint_type)]
@@ -182,6 +183,24 @@ def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
                 yield "event: snapshot\ndata: " + json.dumps(orchestrator.snapshot(), default=str, separators=(",", ":")) + "\n\n"
                 await asyncio.sleep(1)
         return StreamingResponse(events(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+
+
+def create_mvp_app(orchestrator: AutoFundOrchestrator, dist: Path | None = None,
+                   *, host: str = "127.0.0.1", port: int = 8000,
+                   artifacts_root: Path | None = None, gate: LaunchGate | None = None) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            # Release the backend publication thread; never touches financial state.
+            orchestrator.shutdown()
+
+    app = FastAPI(title=PRODUCT_VERSION, version=VERSION, docs_url=None, redoc_url=None, lifespan=lifespan)
+    control_token = _install_security(app, host=host, port=port, gate=gate)
+    _state_routes(app, orchestrator)
+    _control_routes(app, orchestrator, control_token)
+    _export_routes(app, orchestrator)
 
     # The research Control Center's read-only surface. Registered before the static mount at "/"
     # so its routes are matched first, and kept in its own module so the research read model never

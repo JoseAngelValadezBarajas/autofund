@@ -64,6 +64,11 @@ BLOCKER_GUIDANCE: dict[str, str] = {
                                           "credential environment variables before starting the application.",
     "PRODUCTION_PREFLIGHT_UNAVAILABLE": "The Production preflight could not read the exchange; no trading is possible.",
     "UNRESOLVED_ORDER": "A previous order is unresolved; reconciliation must complete before trading.",
+    "LIVE_JOURNAL_NEEDS_MIGRATION": "The live journal predates authentication. Review it, then run "
+                                    "`autofund secrets migrate-journal` to authenticate it; it is never upgraded silently.",
+    "EXECUTION_JOURNAL_INTEGRITY_FAILURE": "The live journal failed its integrity or authentication check: it may be "
+                                           "corrupt, truncated or tampered with. Do not trade. Investigate before using it; "
+                                           "only `autofund secrets reset-journal` after deliberately starting a new one.",
     "EXECUTION_JOURNAL_IN_USE": "Another AutoFund process owns the live execution journal. Only one "
                                 "instance may trade at a time; close the other instance and retry.",
 }

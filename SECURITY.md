@@ -136,3 +136,22 @@ before publication.
   recoverable by anyone who clones.
 - **A confirmed credential in Git history is a publication blocker**, and remediation is history
   rewriting plus credential rotation — not a deletion in a new commit.
+
+
+## Hardening in place
+
+What the software does to protect an operator, so a reviewer can check it rather than trust it.
+
+| Area | Control |
+|---|---|
+| **Secrets at rest** | Stored in the OS credential store (`autofund secrets`), not in `.env` or `keys.json`. Values are never printed, logged or put in error messages. Demo mode receives none. |
+| **Execution journal** | Hash-chained, every record authenticated with an HMAC under a key kept outside the journal, plus a signed anchor against truncation. That the journal *was* authenticated is remembered in the credential store, so deleting the MACs and the anchor is detected as a downgrade, not mistaken for an old file. An old journal is migrated only by an explicit, confirmed operator step (`autofund secrets migrate-journal`). |
+| **Local web surfaces** | Loopback only; Host allowlist (DNS rebinding); Origin and constant-time token on every mutation; `frame-ancestors 'none'`, `X-Frame-Options`, CORP/COOP; a launch link that is exchanged for an `HttpOnly` `SameSite=Strict` cookie, so other programs on the machine cannot read balances or fetch the control token. |
+| **Network egress** | Fixed hosts, GET allowlists, single-use submission permits, no redirects, no proxy environment, and bounded response sizes (measured after decompression). |
+| **Fail-safe** | Refuses to start under `python -O` (safety assertions would vanish). Monitoring failures are counted and logged by kind, never silently swallowed. |
+| **Supply chain** | Dependencies pinned and audited (`pip-audit`, `npm audit`); GitHub Actions pinned by commit SHA; secret scan of the tree and of every reachable Git blob; `bandit` gate with a recorded baseline. |
+
+### Known limits
+
+- The journal anchor and marker defend against someone who can edit the files but not the credential store. An attacker who controls the whole account can read the key, and rolling the journal **and** its anchor back to an older consistent pair is not detectable locally; that needs a witness outside this machine.
+- Another program running as the same user can read that user's credential store. The OS store protects against file theft and other users, not against code running as you.
