@@ -366,3 +366,60 @@ def test_buy_and_hold_control_is_always_long_even_when_trends_are_down(tmp_path)
     assert {r.position for r in compute_signals(STRATEGIES["buy-hold"], series).rows} == {1}
     assert {r.position for r in compute_signals(STRATEGIES["momentum-126"], series).rows} == {0}
     assert "Control" in STRATEGIES["buy-hold"].description
+
+
+# ---- audit regressions ----
+
+@pytest.mark.parametrize("fraction", ["NaN", "sNaN", "Infinity", "-Infinity", "0.0001", "1e-400"])
+def test_non_finite_and_dust_fractions_are_refused_cleanly(service, fraction):
+    with pytest.raises(SessionError):
+        service.session.build_plan(SessionConfig("momentum-126", D(fraction)))
+
+
+def test_a_rejected_order_does_not_count_as_a_finished_rebalance(service, broker):
+    service.session.start(CONFIG, START_PHRASE)
+    broker.reject = True
+    service.session.execute(service.session.build_plan(CONFIG).plan_id)
+    assert service.session.last_rebalance() is None  # it must be retried, not skipped
+    broker.reject = False
+    broker.orders.clear()
+    service.session.execute(service.session.build_plan(CONFIG).plan_id)
+    assert service.session.last_rebalance() is not None
+
+
+def test_kill_is_not_blocked_by_an_execution_in_flight(service, broker):
+    """The kill switch must work while an execution holds the session lock and waits on the broker."""
+    import threading
+    import time
+
+    gate, entered = threading.Event(), threading.Event()
+    real_send = broker.send
+
+    def slow_send(request):
+        if request.method == "POST":
+            entered.set()
+            gate.wait(10)  # the broker is slow to answer the first order
+        return real_send(request)
+    broker.send = slow_send
+
+    service.session.start(CONFIG, START_PHRASE)
+    plan = service.session.build_plan(CONFIG)
+    results = {}
+    worker = threading.Thread(target=lambda: results.update(r=service.session.execute(plan.plan_id)))
+    worker.start()
+    assert entered.wait(5)
+
+    started = time.monotonic()
+    service.session.kill("test kill during execution")
+    assert time.monotonic() - started < 8  # bounded by the lock wait, not by the 10 s broker stall
+    assert service.session.state == "HALTED"
+    assert any(r[0] == "DELETE" and r[1] == "/v2/orders" for r in broker.requests)
+
+    gate.set()
+    worker.join(10)
+    placed = [o for o in results["r"]["orders"]]
+    assert len(placed) == 1  # the second order was never placed after the kill
+    assert all(o["status"] in ("filled", "canceled") or o["status"] for o in placed)
+    # And the broker was told to cancel again after the in-flight order landed.
+    deletes = [r for r in broker.requests if r[0] == "DELETE" and r[1] == "/v2/orders"]
+    assert len(deletes) >= 2

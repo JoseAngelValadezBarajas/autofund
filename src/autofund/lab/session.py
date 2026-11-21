@@ -35,6 +35,7 @@ from .signals import STRATEGIES, SignalError, SignalProvider, SignalSet
 START_PHRASE = "START PAPER EXPERIMENT"
 FLATTEN_PHRASE = "FLATTEN PAPER"
 MAX_CAPITAL_FRACTION = Decimal("0.5")
+MIN_CAPITAL_FRACTION = Decimal("0.001")
 MAX_ORDER_FRACTION = Decimal("0.25")
 MIN_ORDER = Decimal("10")
 PLAN_MAX_AGE_SECONDS = 600
@@ -92,8 +93,11 @@ class Plan:
 def validate_config(config: SessionConfig) -> None:
     if config.strategy_id not in STRATEGIES:
         raise SessionError("unknown strategy")
-    if not Decimal("0") < config.capital_fraction <= MAX_CAPITAL_FRACTION:
-        raise SessionError(f"capital fraction must be above 0 and at most {MAX_CAPITAL_FRACTION}")
+    fraction = config.capital_fraction
+    # NaN and infinities are not numbers an order can be sized from, and comparing a NaN raises.
+    if not fraction.is_finite() or not MIN_CAPITAL_FRACTION <= fraction <= MAX_CAPITAL_FRACTION:
+        raise SessionError(
+            f"capital fraction must be between {MIN_CAPITAL_FRACTION} and {MAX_CAPITAL_FRACTION}")
 
 
 class PaperSession:
@@ -115,6 +119,7 @@ class PaperSession:
         self._state_path = self._dir / "state.json"
         self._lock = threading.RLock()
         self._stop_auto = threading.Event()
+        self._kill_requested = threading.Event()
         self._auto: threading.Thread | None = None
         self.state = STOPPED
         self.config: SessionConfig | None = None
@@ -191,6 +196,7 @@ class PaperSession:
             account = self._paper().get_account()
             if account.trading_blocked or account.status != "ACTIVE":
                 raise SessionError("the paper account is not active for trading")
+            self._kill_requested.clear()
             self.state, self.config = ACTIVE, config
             self.session_id = "paper-" + self._now().strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(2)
             self.started_at, self.halt_reason, self.last_execution = self._now(), None, None
@@ -225,16 +231,28 @@ class PaperSession:
                                 open_orders_cancelled=cancelled)
 
     def kill(self, reason: str = "operator") -> None:
-        with self._lock:
-            self._end_auto()
-            cancelled = True
-            try:
-                self._paper().cancel_open_orders()
-            except AlpacaError:
-                cancelled = False
+        """Halt now. It must never wait behind an execution that holds the session lock.
+
+        An execution can sit in the lock for a minute while it reconciles fills; a kill switch that
+        queued behind it would not be one. So the kill is signalled first (the execution stops
+        placing orders and reconciling at its next step), open orders are cancelled without the
+        lock, and only the bookkeeping waits, briefly, for it.
+        """
+        self._kill_requested.set()
+        self._stop_auto.set()
+        cancelled = True
+        try:
+            self._paper().cancel_open_orders()
+        except AlpacaError:
+            cancelled = False
+        got_lock = self._lock.acquire(timeout=3)
+        try:
             self.state, self.halt_reason = HALTED, reason
             self.journal.append("SESSION_KILLED", session=self.session_id, reason=reason,
-                                open_orders_cancelled=cancelled)
+                                open_orders_cancelled=cancelled, waited_for_lock=got_lock)
+        finally:
+            if got_lock:
+                self._lock.release()
 
     def shutdown(self) -> None:
         """Application exit: end automation. Broker-side orders and positions are untouched."""
@@ -278,12 +296,23 @@ class PaperSession:
                 raise SessionError("the market is closed; confirm queuing for the next open to proceed")
             results: list[dict[str, Any]] = []
             for order in plan.orders:
+                if self._kill_requested.is_set():
+                    break
                 results.append(self._place(client, plan, order))
                 if self.state == HALTED:
                     break
-            if clock.is_open:
+            if self._kill_requested.is_set():
+                # An order submitted while the kill was being signalled must not survive it.
+                try:
+                    client.cancel_open_orders()
+                except AlpacaError:
+                    pass
+            elif clock.is_open:
                 self._reconcile(client, results)
-            self._mark_rebalanced()
+            # A rebalance is "done for today" only if every order went through; a rejected or
+            # unresolved one must be retried, not silently counted.
+            if all(r.get("status") not in ("rejected", "UNKNOWN") for r in results):
+                self._mark_rebalanced()
             self.last_execution = {"plan_id": plan_id, "market_open": clock.is_open, "orders": results,
                                    "at": self._now().isoformat()}
             self.journal.append("EXECUTION", plan_id=plan_id, market_open=clock.is_open, orders=results)
@@ -323,7 +352,7 @@ class PaperSession:
     def _reconcile(self, client: AlpacaPaperClient, results: list[dict[str, Any]]) -> None:
         deadline = time.monotonic() + RECONCILE_WINDOW_SECONDS
         pending = {r["client_order_id"]: r for r in results if r.get("order_id")}
-        while pending and time.monotonic() < deadline:
+        while pending and time.monotonic() < deadline and not self._kill_requested.is_set():
             for cid, row in list(pending.items()):
                 order: Order | None = client.get_order_by_client_id(cid)
                 if order is None:

@@ -68,7 +68,10 @@ ALLOWED_SUBSTRINGS = (
 
 # Paths whose contents are documentation of the credential contract rather than credentials.
 EXEMPT_PATHS = frozenset({".env.example", "scripts/history_secret_audit.py",
-                          "scripts/secret_scan.py", "tests/mvp/test_public_release.py"})
+                          "scripts/secret_scan.py", "tests/mvp/test_public_release.py",
+                          # Positive samples (clearly fake values) that prove this audit's own
+                          # patterns still catch real-looking assignments.
+                          "tests/public/test_secret_audit_patterns.py"})
 
 
 class AuditError(RuntimeError):

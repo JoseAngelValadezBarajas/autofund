@@ -16,10 +16,10 @@ PATTERN = audit.PATTERNS["ENV_ASSIGNED_SECRET"]
 
 
 @pytest.mark.parametrize("line", [
-    "ALPACA_API_SECRET=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd",
-    "API_KEY = PKABCDEFGHIJKLMNOPQRST",
-    "DB_PASSWORD=correcthorsebatterystaple",
-    "AUTH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz",
+    "ALPACA_API_SECRET=FAKE_NOT_A_REAL_SECRET_0123456789abcdef",
+    "API_KEY = FAKEPKABCDEFGHIJKLMNOPQRST",
+    "DB_PASSWORD=FAKE-correcthorsebatterystaple",
+    "AUTH_TOKEN=FAKE_ghp_abcdefghijklmnopqrstuvwxyz",
 ])
 def test_real_looking_env_assignments_are_still_flagged(line):
     assert PATTERN.search(line)

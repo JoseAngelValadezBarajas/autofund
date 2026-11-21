@@ -107,3 +107,9 @@ def test_lab_cli_is_registered():
 
     import autofund.f4_cli as cli
     assert '"lab"' in inspect.getsource(cli)
+
+
+@pytest.mark.parametrize("fraction", ["NaN", "Infinity", "0.0001", "-0.1"])
+def test_hostile_capital_fractions_are_a_clean_409_never_a_500(web, fraction):
+    response = web.post("/api/v1/lab/session/plan", json={"strategy_id": "momentum-126", "capital_fraction": fraction})
+    assert response.status_code == 409
